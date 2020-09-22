@@ -1,0 +1,12 @@
+#note that file paths are relative to the pipeline directory
+root: "/fast/work/groups/ag_ohler/dharnet_m/MuRF1/"
+REF_orig: "../../cortexomics/pipeline/GRCm38.p5.genome.fa.gz"
+GTF_orig: "../../cortexomics/annotation/gencode.vM12.annotation.gtf"
+sample_files: "../src/read_files.csv"
+sample_parameter: "../src/sample_parameter.csv"
+multiqcscript: 'multiqc'
+TRIM_IDS: True
+ALIGNER_TO_USE: 'star'
+rnaseqpipescriptdir: '../src/pipeline_scripts/'
+FILT_RNA_FOLDER: 'preprocessed_reads'
+SALMONLIBTYPE: "ISR"

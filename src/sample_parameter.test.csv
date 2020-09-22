@@ -1,0 +1,5 @@
+sample_id,library_layout,read_pattern,protocol,fragment_length_mean,fragment_length_sd,assay,group
+test,PAIRED, -f *R1*fastq.gz -q *R2*fastq.gz,yes,300,20,total,test
+
+
+
