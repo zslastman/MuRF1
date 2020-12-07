@@ -33,7 +33,7 @@ plot_go_enrich <- function(go_table, sort_var, title_str, num_top = 10){
     dplyr::mutate(gene_ratio = Significant/Annotated) %>%
     head(num_top) %>%
     filter(Significant!=0)%>%
-    dplyr::mutate(Term = factor(Term, levels = rev(Term)))
+    dplyr::mutate(Term = factor((paste0(Term,'\n',GO.ID))), levels = rev(paste0(Term,'\n',GO.ID)))
   
   #log cale breaks for the pvalues
   coltranslims = got_table$p_value %>%na.omit%>% log10%>%multiply_by(-1)%>%{c(floor(min(.)),ceiling(max(.)))}

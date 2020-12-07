@@ -544,7 +544,7 @@ plot_heatmap <- function(mat, title = "", z_min = -Inf, z_max = Inf, dist_fun = 
     assert_that(is.function(dist_fun))
   }
   
-  gplots::heatmap.2(dual_scaled_mat[,10:1],
+  gplots::heatmap.2(dual_scaled_mat[,],
                     trace = 'none',
                     scale = 'none',
                     distfun  = cor_dist,

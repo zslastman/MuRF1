@@ -5,7 +5,7 @@ output:
   toc: yes
 ---
   
-
+# Clustering - Zea Mays Meoisis Riboseq data
   
 # Setup
   
@@ -19,6 +19,7 @@ library(here)
 library(magrittr)
 library(stringr)
 library(ggplot2)
+library(tximport)
 library(dbscan)
 
 dir.create(here('data'),showWarnings=F)
@@ -26,22 +27,19 @@ dir.create(here('R_cache'),showWarnings=F)
 
 base::source(here('src/Rprofile.R'))
 
-
-```
-
-
-```{r}
 l2fc_threshold <- 0.32
 ```
 
-```{r dds, include=FALSE, echo=FALSE, eval=TRUE}
+```{r dds, include=FALSE, echo=FALSE, eval=T}
 
 #this perl creates a file with unique gene_id, gene_name in pairs, faster than loading the whole gtf if it's big
 # perl -lane '/gene_name\W+(\w+)\W/ ;my $a=$1;/gene_id\W+(\w+)\W/; print($a,"\t",$1)' <(cat  pipeline/genes.chrnm.gtf) | uniq | sort | uniq > pipeline/gid_2_gname.txt
 # gtf <- here('pipeline/genes.chrnm.gtf')
 # anno <- projmemoise(function(gtf){rtracklayer::import(gtf)})(gtf)
-gid2gname <- fread(here('pipeline/gid_2_gname.txt'))%>%set_colnames(c('gene_name','gene_id'))
-tx2gene <-  read_tsv(here('pipeline/trid2gid.txt'))%>%set_colnames(c('tr_id','g_id'))
+gid2gname <- read_tsv(here('data/gid_2_gname.txt'))%>%set_colnames(c('gene_name','gene_id'))
+tx2gene <-  read_tsv(here('pipeline/gid_2_trid.txt.gz'))%>%set_colnames(c('g_id','tr_id'))
+
+#gid2gname <- read_tsv(here('data/gid_2_gname.txt'))%>%set_colnames(c('gnm','g_id'))
 
 #read in the sample_parameter file from the piepline
 sampdf <- fread(here('src/sample_parameter.csv'))%>%
@@ -60,14 +58,12 @@ if(is.null(sampdf$sample_name)) sampdf$sample_name <- sampdf$sample_id
 
 if(!file.exists(here('data/dds.rds'))){
    
-
-
   allquantfiles = Sys.glob(here::here('pipeline/salmon/data/*/quant.sf'))
   names(allquantfiles) <- allquantfiles%>%dirname%>%basename
 
   tx_countdata = tximport(files=allquantfiles,
     ignoreTxVersion=TRUE,
-    tx2gene=tx2gene,
+    tx2gene=tx2gene[,c('tr_id','g_id')],
     type='salmon'
   )
 
@@ -80,12 +76,13 @@ if(!file.exists(here('data/dds.rds'))){
         mutate(Name=str_extract(Name,'ENSG\\w+|ENSMUST\\w+'))
       }
   )
-
-  dds <- DESeqDataSetFromTximport(tx_countdata, 
-    # sampdf%>%mutate(group=paste0(cell_type,'_',time)%>%str_replace('_0','')),
-    sampdf%>%mutate(group=group%>%str_replace('_\\d$','')),
-    ~ group )
+  stopifnot(sampdf$sample_id%in%colnames(tx_countdata$abundance))
+  rownames(sampdf) <- sampdf$sample_id
+  sampdf = sampdf[colnames(tx_countdata$abundance),]
+  dds <- DESeqDataSetFromTximport(tx_countdata, sampdf,~ group ,)
   # colnames(counts(dds))<-sampdf$sample_id
+  iso_tx_countdata %>% saveRDS(here('data/iso_tx_countdata.rds'))
+  tx_countdata %>% saveRDS(here('data/tx_countdata.rds'))
   saveRDS(dds,here('data/dds.rds'))
 }else{
   dds <-readRDS(here('data/dds.rds'))
@@ -112,7 +109,7 @@ cat('successfully normalized  countdata')
 ```
 
 
-```{r test contrasts,eval=TRUE}
+```{r test contrasts}
 stopifnot(exists('dds'))
 stopifnot(exists('normcounts'))
 stopifnot(exists('sampdf'))
@@ -127,6 +124,8 @@ stopifnot(exists('sampdf'))
 # [1] "Intercept"             "group_MT_vs_MB"        "group_MT_A24_vs_MB"
 # [4] "group_MT_A72_vs_MB"    "group_MT_Ctrl24_vs_MB" "group_MT_Ctrl72_vs_MB"
 resnames = resultsNames(testdds)
+stopifnot(resnames==c("Intercept", "group_MT_vs_MB", "group_MT_A24_vs_MB", "group_MT_A72_vs_MB", 
+"group_MT_Ctrl24_vs_MB", "group_MT_Ctrl72_vs_MB"))
 
 sgroupvects = model.matrix(data=dds@colData,design(dds))%>%set_rownames(dds@colData$group)%>%{.[unique(rownames(.)),]}%>%
 {m=.;lapply(1:nrow(.)%>%setNames(rownames(m)),function(i){m[i,]}) }
@@ -135,10 +134,8 @@ contrasts <- list(
   "MT_vs_MB" = with(sgroupvects,MT - MB),
   "Ctrl_MT_A24_vs_MT" = with(sgroupvects,MT_Ctrl24 - MT),
   "Ctrl_MT_A72_vs_MT_A24" = with(sgroupvects,MT_Ctrl72 - MT_Ctrl24),
-  "Ctrl_MT_A72_vs_MT0" = with(sgroupvects,MT_Ctrl72 - MT),
   "Aspecific_MT_A24_vs_MT" = with(sgroupvects,(MT_A24 - MT) - (MT_Ctrl24 - MT)),
-  "Aspecific_MT_A72_vs_MT_A24" = with(sgroupvects,(MT_A72 - MT_A24) - (MT_Ctrl72 - MT_Ctrl24)),
-  "Aspecific_MT_A72_vs_MT0" = with(sgroupvects,(MT_A72 - MT) - (MT_Ctrl72 - MT))
+  "Aspecific_MT_A72_vs_MT_A24" = with(sgroupvects,(MT_A72 - MT_A24) - (MT_Ctrl72 - MT_Ctrl24))
 )
 
 #check the contrasts
@@ -158,7 +155,7 @@ cat('tested contrasts')
 ```
 
 
-```{r runcontrasts,eval=TRUE}
+```{r runcontrasts}
 #you might want to use vst if there's a lot of data, for speed
 dir.create(here('data'))
 if(!file.exists(here('data/resultslist.rds'))){
@@ -174,16 +171,10 @@ if(!file.exists(here('data/resultslist.rds'))){
   ddsLRT = DESeq(dds, test="LRT", full=~group,reduced = ~ 1)
   changegenes <- results(ddsLRT)%>%ddstodf %>%subset%>%filter(padj < 0.05)%>%.$gene_id
   saveRDS(changegenes,here('data/changegenes.rds'))
-  trim_gids <- function(df){
-    df=as.data.frame(df);
-    df%>%mutate_at(vars(matches('gene_id|feature_id')),list(~str_replace(.,'\\.\\d+','')))
-  }
-  resultslist %<>% map(.%>%as.data.frame%>%trim_gids)
   
   saveRDS(resultslist,here('data/resultslist.rds'))
   
   
-
   
 }else{
   resultslist<-readRDS(here('data/resultslist.rds'))
@@ -193,12 +184,14 @@ if(!file.exists(here('data/resultslist.rds'))){
 cat('successfully calculated contrasts:')
 message(names(resultslist)%>%paste(collapse=' '))
 
+resultsall = resultslist%>%map_df(.id='contrast',as.data.frame)%>%left_join(gid2gname)
+resultsall%>%group_by(contrast)%>%filter(padj<0.05,abs(log2FoldChange)>log2(1.5))%>%mutate(direction=ifelse(log2FoldChange>0,'up','down'))%>%group_by(contrast,direction)%>%tally%>%kable(main='differentially Expressed Genes')
 
 ```
 
 
 # QC {.tabset}
-```{r qc, include = TRUE,message=TRUE,eval=F,cache=F,results='asis'}
+```{r qc, include = TRUE,message=TRUE,eval=T,cache=F,results='asis',fig.height=7,fig.width=7}
 stopifnot(exists('dds'))
 stopifnot(exists('normcounts'))
 stopifnot(exists('sampdf'))
@@ -268,7 +261,9 @@ rld_dispersion %>%
   geom_point() +
   labs(x = "mean log regularized counts", y = "standar deviation log regularized counts")
 
+```
 
+```{r pcas}
 cat("## pca, cache = F, fig_width=12,fig_height=12")
 stopifnot(colnames(rld)==colnames(dds))
 
@@ -281,25 +276,27 @@ pca = pca +
   expand_limits(y = pca$data$PC2 %>%
                   range %>%
                   multiply_by(1.3))
-#(pca+geom_text(aes(group),size=I(2),alpha=I(0.5))) %>% {.$layers=.$layers[-1];.+geom_point(size=I(0))} +
-#  ggtitle('PCA : labelled by samplename')
+# (pca+geom_text(aes(group),size=I(2),alpha=I(0.5))) %>% {.$layers=.$layers[-1];.+geom_point(size=I(0))} +
+ # ggtitle('PCA : labelled by samplename')
 #we also want a table with these data to pick out outliers
 pca$data %>% write_tsv(here('data/pca.tsv'))
 
 cat("## pca_grouplabel, fig_width=12,fig_height=12")
-(pca+geom_text(aes(label=group),size=I(2),alpha=I(0.5)))%>%{.$layers=.$layers[-1];.+geom_point(size=I(0))}+ggtitle('PCA : labelled by group')
-
-cat("## pca_nolabel, fig_width=12,fig_height=12")
-(pca+geom_text(aes(label=group),size=I(0),alpha=I(0.5)))%>%{.$layers=.$layers[-1];.+geom_point(size=I(3))}+ggtitle('PCA')
+pca+ggrepel::geom_label_repel(aes(label=group),size=I(4),alpha=I(1))+ggtitle('PCA : labelled by group')
+pca+ggtitle('PCA : labelled by group')
 
 
+```
+
+```{r topn heatmap}
 cat("## heatmap")
+
 # dual scale settings for heatmaps
 ## setting values outside of the range [z_min, z_max] to the limiting values
 if(!exists('z_max')) z_max <-  3.5
 if(!exists('z_min')) z_min <- -3.5
 # colnames(rld_df) %<>% {stringr::str_replace(.,'sample_id','sample_name')}
-plot_heatmap_fluc_features(500, rld_df, z_min = z_min, z_max = z_max)
+plot_heatmap_fluc_features(2000, rld_df, z_min = z_min, z_max = z_max)
 
 my_counts%<>%group_by(sample_name)%>%
   mutate(countclass = case_when(
@@ -323,13 +320,15 @@ my_counts%>%
 
 qc plots above
 
-
-
-
-
 # Differential expression
 
-```{r, results='asis',eval=TRUE}
+```{r, results='asis'}
+
+trim_gids <- function(df){
+    df=as.data.frame(df);
+    df%>%mutate_at(vars(matches('gene_id|feature_id')),list(~str_replace(.,'\\.\\d+','')))
+}
+resultslist %<>% map(.%>%as.data.frame%>%trim_gids)
 
 contrast = names(resultslist)[[4]]
 regdirfuncs = list(Up=identity,Down=function(x)x * -1)
@@ -368,175 +367,72 @@ for(contrast in names(resultslist)){
 ```
 
 
-# Fold Change Comparisons - Ctl vs Treatment{.tabset}
-
-## 24h Change
-
-```{r,eval=TRUE}
+```{r}
 #get highcount genes
 highcountgenes<-counts(dds)%>%as.data.frame%>%rownames_to_column('gene_id')%>%gather(lib,count,-gene_id)%>%
     mutate(lib = str_replace(lib,'_\\d$',''))%>%
   {stopifnot(tally(.)%>%.$n%>%table%>%length%>%`==`(1));.}%>%
-    group_by(gene_id)%>%
+  group_by(gene_id,lib)%>%
     summarise(count=sum(count))%>%
     filter(count>32)%>%
   .$gene_id
 
-# #data set for fold changes
-fcsetdf = resultslist$Aspecific_MT_A24_vs_MT%>%select(Spec_24_padj =padj, Spec_24_lfc = log2FoldChange,gene_id)%>%
-    left_join(resultslist$Ctrl_MT_A24_vs_MT%>%as.data.frame%>%
-                select(Ctl_24_padj =padj, Ctrl_24_lfc = log2FoldChange,gene_id))%>%
-    filter(gene_id %in% highcountgenes)%>%
-    mutate(
-      Achange = (sign(Spec_24_lfc))*as.numeric(Spec_24_padj<0.05),
-      Ctlchange = (sign(Ctrl_24_lfc))*as.numeric(Ctl_24_padj<0.05),
-      set = case_when(
-       ((Achange * Ctlchange) == -1)  ~ 'compensating',
-      (Ctlchange * Achange) == 1  ~ 'concurrent' ,
-        (abs(Ctlchange)) == 1 ~ "Ctl Only",
-        (abs(Achange)) == 1 ~ "Specific Only",
-      TRUE ~ 'None'
-      )
-    )
+changecols<-c('#1db220','#737373','#fef636','#b31261')%>%setNames(c("TE only", "mRNA only", "compensating", "concurrent"))
 
-changecols<-c('#1db220','red','purple','blue','grey')%>%setNames(c("Ctl Only", "Specific Only", "compensating", "concurrent",'None'))
-stopifnot(fcsetdf$set%>%unique%>%is_in(names(changecols)))
+# #data set for fold changes
+# fcsetdf = resultslist$%>%select(TEpadj =padj, TEFC = log2FoldChange,gene_id)%>%
+#     left_join(resultslist$fraction_si_vs_mock%>%as.data.frame%>%
+#                 select(TRpadj =padj, TRFC = log2FoldChange,gene_id))%>%
+#     filter(gene_id %in% highcountgenes)%>%
+#     mutate(
+#       TEchange = (sign(TEFC))*as.numeric(TEpadj<0.05),
+#       TRchange = (sign(TRFC))*as.numeric(TRpadj<0.05),
+#       set = case_when(
+#        ((TEchange * TRchange) == -1)  ~ 'compensating',
+#       (TEchange * TRchange) == 1  ~ 'concurrent' ,
+#         (abs(TRchange)) == 1 ~ "mRNA only",
+#         (abs(TEchange)) == 1 ~ "TE only",
+#       TRUE ~ as.character(NA)
+#       )
+#     )
+
 #print fc plot
-dir.create(here('tables'),showWarnings = F)
-fcsetdf%>%left_join(gid2gname%>%select(gene_id,gene_name))%>%write_tsv(here('tables/fcsetdf.tsv')%T>%normalizePath%T>%message)
-p = fcsetdf %>%
-  filter(!is.na(set))%>%
-  filter(!set=="None")%>%
-  arrange(set!="None")%>%
-  mutate(set=as_factor(set))%>%
-  qplot(data=.,x=Ctrl_24_lfc,y=Spec_24_lfc+Ctrl_24_lfc,geom='blank',color=set)+
-  geom_point(size=I(.5))+
-  theme_bw()+
-  scale_color_manual('Set',values = changecols)+
-  scale_x_continuous('Control change 24h',limits=c(-3,3))+
-  scale_y_continuous('Control+Specific change',limits=c(-3,3))+
-  coord_fixed()
-p
+# dir.create(here('tables'),showWarnings = F)
+# fcsetdf%>%left_join(gid2gname%>%select(gene_id,gene_name))%>%write_tsv(here('tables/fcsetdf.tsv')%T>%normalizePath%T>%message)
+# p = fcsetdf %>%
+#   filter(!is.na(set))%>%
+#   qplot(data=.,x=TRFC,y=TEFC,geom='point',color=set)+
+#   theme_bw()+
+#   scale_color_manual('Set',values = changecols)+
+#   scale_x_continuous('Transcriptional change',limits=c(-3,3))+
+#   scale_y_continuous('TE change (xtail)',limits=c(-3,3))+
+#   coord_fixed()
 # plotfile <- 'plots/xtail_fc.pdf'
 # dir.create(dirname(plotfile))
-#pdf(plotfile)
+# pdf(plotfile)
 # print(p)
-#dev.off()
+# dev.off()
 # message(normalizePath(plotfile))
-library(DT)
-datatable(fcsetdf%>%left_join(gid2gname)%>%select(gene_name,gene_id,set),filter=c('top'))
 
 ```
 
 
-## 24h-72h Change
+## Contrasts Enrichment
 
-```{r,eval=TRUE,cache=TRUE}
-fcsetdflate = resultslist$Aspecific_MT_A72_vs_MT%>%select(Spec_72_padj =padj, Spec_72_lfc = log2FoldChange,gene_id)%>%
-    left_join(resultslist$Ctrl_MT_A72_vs_MT%>%as.data.frame%>%
-                select(Ctl_72_padj =padj, Ctrl_72_lfc = log2FoldChange,gene_id))%>%
-    filter(gene_id %in% highcountgenes)%>%
-    mutate(
-      Achange = (sign(Spec_72_lfc))*as.numeric(Spec_72_padj<0.05),
-      Ctlchange = (sign(Ctrl_72_lfc))*as.numeric(Ctl_72_padj<0.05),
-      set = case_when(
-       ((Achange * Ctlchange) == -1)  ~ 'compensating',
-      (Ctlchange * Achange) == 1  ~ 'concurrent' ,
-        (abs(Ctlchange)) == 1 ~ "Ctl Only",
-        (abs(Achange)) == 1 ~ "Specific Only",
-      TRUE ~ 'None'
-      )
-    )
-#print fc plot
-fcsetdflate%>%left_join(gid2gname%>%select(gene_id,gene_name))%>%write_tsv(here('tables/fcsetdflate.tsv')%T>%normalizePath%T>%message)
-p = fcsetdflate %>%
-  filter(!is.na(set))%>%
-  filter(!set=="None")%>%
-  arrange(set!="None")%>%
-  mutate(set=as_factor(set))%>%
-  qplot(data=.,x=Ctrl_72_lfc,y=Spec_72_lfc+Ctrl_72_lfc,geom='blank',color=set)+
-  geom_point(size=I(.2))+
-  theme_bw()+
-  scale_color_manual('Set',values = changecols)+
-  scale_x_continuous('Control change 72h',limits=c(-3,3))+
-  scale_y_continuous('Control+Specific change (xtail)',limits=c(-3,3))+
-  coord_fixed()
-p
-plotfile <- 'plots/xtail_fc.pdf'
-dir.create(dirname(plotfile))
-#pdf(plotfile)
-# print(p)
-#dev.off()
-# message(normalizePath(plotfile))
-library(DT)
-datatable(fcsetdf%>%left_join(gid2gname)%>%select(gene_name,gene_id,set),filter=c('top'))
-
-```
-
-
-## 0-72h Change
-
-```{r,eval=TRUE,cache=TRUE}
-fcsetdflate = resultslist$Aspecific_MT_A72_vs_MT0%>%select(Spec_72_padj =padj, Spec_72_lfc = log2FoldChange,gene_id)%>%
-    left_join(resultslist$Ctrl_MT_A72_vs_MT0%>%as.data.frame%>%
-                select(Ctl_72_padj =padj, Ctrl_72_lfc = log2FoldChange,gene_id))%>%
-    filter(gene_id %in% highcountgenes)%>%
-    mutate(
-      Achange = (sign(Spec_72_lfc))*as.numeric(Spec_72_padj<0.05),
-      Ctlchange = (sign(Ctrl_72_lfc))*as.numeric(Ctl_72_padj<0.05),
-      set = case_when(
-       ((Achange * Ctlchange) == -1)  ~ 'compensating',
-      (Ctlchange * Achange) == 1  ~ 'concurrent' ,
-        (abs(Ctlchange)) == 1 ~ "Ctl Only",
-        (abs(Achange)) == 1 ~ "Specific Only",
-      TRUE ~ 'None'
-      )
-    )
-#print fc plot
-fcsetdflate%>%left_join(gid2gname%>%select(gene_id,gene_name))%>%write_tsv(here('tables/fcsetdflate.tsv')%T>%normalizePath%T>%message)
-p = fcsetdflate %>%
-  filter(!is.na(set))%>%
-  filter(!set=="None")%>%
-  arrange(set!="None")%>%
-  mutate(set=as_factor(set))%>%
-  qplot(data=.,x=Ctrl_72_lfc,y=Spec_72_lfc+Ctrl_72_lfc,geom='blank',color=set)+
-  geom_point(size=I(.2))+
-  theme_bw()+
-  scale_color_manual('Set',values = changecols)+
-  scale_x_continuous('Control change 72h',limits=c(-3,3))+
-  scale_y_continuous('Control+Specific change (xtail)',limits=c(-3,3))+
-  coord_fixed()
-p
-plotfile <- 'plots/xtail_fc.pdf'
-dir.create(dirname(plotfile))
-#pdf(plotfile)
-# print(p)
-#dev.off()
-# message(normalizePath(plotfile))
-library(DT)
-datatable(fcsetdf%>%left_join(gid2gname)%>%select(gene_name,gene_id,set),filter=c('top'))
-
-```
-
-
-
-```{r,eval=TRUE,cache=TRUE}
+```{r,eval=T}
 base::source(here('src/gofuncs.R'))
 GTOGO <- select(GTOGO,gene_name,go_id,gene_id)%>%filter(gene_id %in% (rownames(normcounts)%>%str_replace(.,'\\.\\d+','')))%>%group_by(go_id)%>%filter(n()>10)
 
 regdirfuncs = list(Up=identity,Down=function(x)x * -1)
 
-fc_df <- resultslist[["MT_vs_MB"]]
-regdirfunc=regdirfuncs[["Up"]]
+fc_df <- resultslist[[1]]
+regdirfunc=regdirfuncs[[1]]
 ont='BP'
 if(!file.exists(here('data/contrgotables.rds'))){
   contrgotables<-map_df(.id='contrast',resultslist,function(fc_df){
     map_df(.id='regdir',regdirfuncs,function(regdirfunc){
       map_df(.id='ontology',c('BP','MF','CC')%>%setNames(.,.),function(ont){
-          siggenes = fc_df%>%{setNames((regdirfunc(.$log2FoldChange)>0) & (.$padj<0.05),.$gene_id)}
-          gotable = possibly(rungo,otherwise = NULL,quiet=TRUE)(siggenes,GTOGO,ont)
-          gotable
-          
+         possibly(rungo,otherwise = NULL,quiet=TRUE)(fc_df%>%{setNames((regdirfunc(.$log2FoldChange)>0) & (.$padj<0.05),.$gene_id)},GTOGO,ont)
       })
     })
   })
@@ -545,39 +441,27 @@ if(!file.exists(here('data/contrgotables.rds'))){
   contrgotables<-readRDS(here('data/contrgotables.rds'))
 }
 
-
 ```
 
 
-# GO contrasts Enrichment{.tabset}
-```{r,eval=TRUE,results='asis',cache=TRUE}
+```{r,eval=}
 
 for(contr in unique(contrgotables$contrast)){
-  cat(paste0("## ",contr,'{.tabset}\n'))
-  for(regd in unique(contrgotables$regdir)){
-  cat(paste0("### ",regd,'{.tabset}\n'))
-     for(ont in unique(contrgotables$ontology)){
-  cat(paste0("#### ",ont,'\n'))
-         gotable = contrgotables%>%filter(contrast==contr,regdir==regd,ontology==ont)
-         print(plot_go_enrich(gotable,'elimFisher',paste(contr,regd,ont)))
-     }
+  for(regdir in unique(contrgotables$regdir)){
+    for(ont in unique(contrgotables$ontology)){
+        plot_go_enrich(contrgotables%>%filter(contrast==contr,regdir==regd,ontology==ont),'elimFisher',paste(contrast,regdir,ontology))
+    }
   }
 }
+
 ```
 
-# GO - term table
 
-```{r,eval=TRUE,cache=TRUE}
+```{r,eval=F}
 library(DT)
 datatable(contrgotables%>%select(ontology,contrast,regdir,GO.ID,elimFisher,Term,Enrichment,Annotated,Significant,Expected),filter=c('top'))
 ```
 
-# GO - GO-gene map
-
-```{r,eval=TRUE,cache=TRUE}
-library(DT)
-datatable(GTOGO,filter=c('top'))
-```
 
 # Output Tables
 
@@ -587,8 +471,9 @@ Below you can see the files into which various objects from the above analysis h
 dir.create(here('tables'),showWarnings = F)
 
 #raw count data
+dir.create('tables')
 counts(dds)%>%as.data.frame%>%rownames_to_column('gene_id')%>%write_tsv(here('tables/rawcountdata.tsv'))
-assay(normcounts)%>%as.data.frame%>%rownames_to_column('gene_id')%>%write_tsv(here('tables/normcountdata.tsv'))
+tx_countdata$abundance%>%as.data.frame%>%rownames_to_column('gene_id')%>%left_join(gid2gname)%>%write_tsv(here('tables/tpms.tsv'))
 #all coefficient, fold changes
 resultslist%>%map_df(.id='contrast',as.data.frame)%>%write_tsv(here('tables/allcontrasts.tsv'))
 
