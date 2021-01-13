@@ -10,6 +10,7 @@ output:
 # Setup
   
 ```{r loadinglibraries, include=FALSE, echo=FALSE, eval=T}
+{
 knitr::opts_chunk$set(root.dir = here::here(),eval=TRUE,cache=FALSE,echo=FALSE,warning = FALSE,message = FALSE,include=TRUE,
                       fig.width =7,fig.height=7,out.width=700,out.height=700,dev='png')
 
@@ -28,9 +29,11 @@ dir.create(here('R_cache'),showWarnings=F)
 base::source(here('src/Rprofile.R'))
 
 l2fc_threshold <- 0.32
+}
 ```
 
 ```{r dds, include=FALSE, echo=FALSE, eval=T}
+{
 
 #this perl creates a file with unique gene_id, gene_name in pairs, faster than loading the whole gtf if it's big
 # perl -lane '/gene_name\W+(\w+)\W/ ;my $a=$1;/gene_id\W+(\w+)\W/; print($a,"\t",$1)' <(cat  pipeline/genes.chrnm.gtf) | uniq | sort | uniq > pipeline/gid_2_gname.txt
@@ -56,7 +59,7 @@ if(is.null(sampdf$sample_name)) sampdf$sample_name <- sampdf$sample_id
 # file.remove(here('data/dds.rds'))
 
 
-if(!file.exists(here('data/dds.rds'))){
+if(!file.exists(here('data/drimseqob.rds'))){
    
   iso_tx_countdata <- readRDS(here('data/iso_tx_countdata.rds'))
   #create our Drimseq objects
@@ -68,9 +71,8 @@ if(!file.exists(here('data/dds.rds'))){
   
   dds <- readRDS(here('data/dds.rds'))
   allcountdesign=colData(dds)%>%as.data.frame
-  allcountdesign%<>%mutate(sample_id=sample)
+  if(!'sample_id'%in%colnames(allcountdesign)) allcountdesign%<>%mutate(sample_id=sample)
   
-  dds <- readRDS(here('data/dds.rds'))
   txdf <- txdf[match(rownames(cts),txdf$TXNAME),]
   all(rownames(cts) == txdf$TXNAME)
 
@@ -92,13 +94,16 @@ if(!file.exists(here('data/dds.rds'))){
   sgroupvects = model.matrix(data=dds@colData,design(dds))%>%set_rownames(dds@colData$group)%>%{.[unique(rownames(.)),]}%>%
     {m=.;lapply(1:nrow(.)%>%setNames(rownames(m)),function(i){m[i,]}) }
 
-  contrasts <- list(
-    "MT_vs_MB" = with(sgroupvects,MT - MB),
-    "Ctrl_MT_A24_vs_MT" = with(sgroupvects,MT_Ctrl24 - MT),
-    "Ctrl_MT_A72_vs_MT_A24" = with(sgroupvects,MT_Ctrl72 - MT_Ctrl24),
-    "Aspecific_MT_A24_vs_MT" = with(sgroupvects,(MT_A24 - MT) - (MT_Ctrl24 - MT)),
-    "Aspecific_MT_A72_vs_MT_A24" = with(sgroupvects,(MT_A72 - MT_A24) - (MT_Ctrl72 - MT_Ctrl24))
-  )
+contrasts <- list(
+  "MT_vs_MB" = with(sgroupvects,MT - MB),
+  "Ctrl_MT_A24_vs_MT" = with(sgroupvects,MT_Ctrl24 - MT),
+  "Ctrl_MT_A72_vs_MT_A24" = with(sgroupvects,MT_Ctrl72 - MT_Ctrl24),
+  "Ctrl_MT_A72_vs_MT0" = with(sgroupvects,MT_Ctrl72 - MT),
+  "Aspecific_MT_A24_vs_MT" = with(sgroupvects,(MT_A24 - MT) - (MT_Ctrl24 - MT)),
+  "Aspecific_MT_A72_vs_MT_A24" = with(sgroupvects,(MT_A72 - MT_A24) - (MT_Ctrl72 - MT_Ctrl24)),
+  "Aspecific_MT_A72_vs_MT0" = with(sgroupvects,(MT_A72 - MT) - (MT_Ctrl72 - MT))
+)
+
   drimseqob = drimseqob
   drimseqob <- dmPrecision(drimseqob, design=design_full)
   drimseqob <- dmFit(drimseqob, design=design_full)
@@ -106,18 +111,14 @@ if(!file.exists(here('data/dds.rds'))){
   drimseqob2 <- dmTest(drimseqob, contrasts[[1]])
 
   } 
-if(!file.exists(here('data/dtuobject.rds'))){
-  dtuobject <- create_dtuobject(dds, blind = TRUE)
-  saveRDS(dtuobject,here('data/dtuobject.rds'))
+  saveRDS(drimseqob,here('data/drimseqob.rds'))
 }else{
-  dtuobject<-readRDS(here('data/dtuobject.rds'))
+  drimseqob<-readRDS(here('data/drimseqob.rds'))
 }
 
-}else{
-  dds <-readRDS(here('data/dds.rds'))
-}
 cat('successfully loaded  countdata and annotation')
 stopifnot(exists('sampdf'))
+}
 ```
 
 
@@ -184,6 +185,63 @@ cat('tested contrasts')
 ```
 
 
+
+
+# Individual gene TR use plots
+
+```{r runcontrasts}
+gid2gname <- read_tsv(here('data/gid_2_gname.txt'))%>%set_colnames(c('gnm','g_id'))
+tx2gene <-  read_tsv(here('pipeline/gid_2_trid.txt.gz'))%>%set_colnames(c('g_id','tr_id'))
+
+igene_id = gid2gname%>%filter(gnm=='Trim63')%>%.$g_id
+plotProportions(drimseqob, gene_id = igene_id, group_variable = "group",
+plot_type = "ribbonplot")
+
+
+
+  
+igene = 'Trim63'
+igeneid = gid2gname %>% 
+  safe_filter(gnm==igene)%>%
+  .$g_id
+igenetrs = tx2gene %>% 
+  safe_filter(g_id==igeneid)%>%
+  .$tr_id%>%unique
+dsets = iso_tx_countdata$abundance%>%colnames
+colgrps = dsets%>%str_extract('.*?(?=_\\d+)')
+colgrp = colgrps[[1]]
+
+ucolgrps = unique(colgrps)%>%setNames(.,.)
+relativeusedf = map_df(.id='dset',ucolgrps,function(colgrp){
+  sab = iso_tx_countdata$abundance[,colgrps==colgrp]%>%rowSums
+  sab%>%
+    enframe('tr_id','abundance')%>%
+    left_join(tx2gene%>%select(g_id,tr_id),by='tr_id')%>%
+    left_join(gid2gname,by='g_id')%>%
+    group_by(gnm)%>%mutate(abundance=abundance/sum(abundance))
+})
+
+ign_usedf = relativeusedf%>%
+  safe_filter(gnm==igene)%>%
+  # separate(dset,c('time','assay'))
+  identity
+
+#now plot
+plotfile<- here(paste0('plots/',,'.pdf'))
+pdf(plotfile)
+locusplot(igene)
+dev.off()
+message(normalizePath(plotfile))
+
+
+```
+
+
+
+
+
+
+
 ```{r runcontrasts}
 #you might want to use vst if there's a lot of data, for speed
 dir.create(here('data'))
@@ -216,183 +274,6 @@ message(names(resultslist)%>%paste(collapse=' '))
 resultsall = resultslist%>%map_df(.id='contrast',as.data.frame)%>%left_join(gid2gname)
 resultsall%>%group_by(contrast)%>%filter(padj<0.05,abs(log2FoldChange)>log2(1.5))%>%mutate(direction=ifelse(log2FoldChange>0,'up','down'))%>%group_by(contrast,direction)%>%tally%>%kable(main='differentially Expressed Genes')
 
-```
-
-
-# QC {.tabset}
-```{r qc, include = TRUE,message=TRUE,eval=T,cache=F,results='asis',fig.height=7,fig.width=7}
-stopifnot(exists('dds'))
-stopifnot(exists('normcounts'))
-stopifnot(exists('sampdf'))
-
-cat("## dispplot")
-#plotDispEsts(dds)
-rld <- normcounts
-cat("## outlierplot")
-if(is.null(SummarizedExperiment::assays(dds)[["cooks"]])){
-  nulltext = "Cooks distance is meaningless\n because we only have one group per sample"
-  # qplot(label=nulltext,x=1,geom='text',y=1,size=I(14))+theme_bw()
-}else{
-  boxplot(log10(SummarizedExperiment::assays(dds)[["cooks"]]), range=0, las=2)
-}
-
-cat("## countdist ,warning=F")
-my_counts <-
-  DESeq2::counts(dds)%>%
-  as.data.frame() %>%
-  tibble::rownames_to_column("feature_id") %>%
-  tidyr::gather(sample_id, count, -feature_id)
-
-sample_annot <- as.data.frame(SummarizedExperiment::colData(dds))
-if(!'sample_name' %in% colnames(sample_annot)) sample_annot$sample_name<-sample_annot$sample_id
-my_counts <-
-  dplyr::left_join(my_counts, sample_annot, by = "sample_id")
-
-stopifnot(exists('dds'))
-
-my_counts %>%
-  ggplot(aes(x = count + 1e-3, color = group, group = sample_name)) +
-  geom_density() +
-  scale_x_log10()
-
-my_counts %>%
-  dplyr::arrange(group) %>%
-  dplyr::mutate(sample_name = factor(sample_name, levels = unique(sample_name))) %>%
-  ggplot(aes(y = count + 1e-3, color = group, x = sample_name)) +
-  geom_violin() +
-  scale_y_log10() +
-  coord_flip()
-
-
-cat("## rlddf")
-stopifnot(is(rld,'DESeqTransform'))
-
-rld_df <- assay(rld)
-
-rld_df <-
-  assay(rld) %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column('feature_id') %>%
-  tibble::as_data_frame() %>%
-  tidyr::gather(sample_id, reg_log_count, -feature_id)
-
-rld_df$sample_name <- sample_annot$sample_name[match(rld_df$sample_id,colData(dds)$sample_id)]
-# rld_df <- get_reg_log_counts(dds, blind = T)
-
-rld_dispersion <-
-  rld_df  %>%
-  dplyr::group_by(feature_id) %>%
-  dplyr::summarise(mean_reg_log_count = mean(reg_log_count),
-                   sd_reg_log_count = sd(reg_log_count))
-
-rld_dispersion %>%
-  ggplot(aes(y = sd_reg_log_count, x = mean_reg_log_count)) +
-  geom_point() +
-  labs(x = "mean log regularized counts", y = "standar deviation log regularized counts")
-
-```
-
-```{r pcas}
-cat("## pca, cache = F, fig_width=12,fig_height=12")
-stopifnot(colnames(rld)==colnames(dds))
-
-message('calculating PCAs')
-pca = DESeq2::plotPCA(rld,intgroup="group")
-pca = pca +
-  expand_limits(x = pca$data$PC1 %>%
-                  range %>%
-                  multiply_by(1.5)) +
-  expand_limits(y = pca$data$PC2 %>%
-                  range %>%
-                  multiply_by(1.3))
-# (pca+geom_text(aes(group),size=I(2),alpha=I(0.5))) %>% {.$layers=.$layers[-1];.+geom_point(size=I(0))} +
- # ggtitle('PCA : labelled by samplename')
-#we also want a table with these data to pick out outliers
-pca$data %>% write_tsv(here('data/pca.tsv'))
-
-cat("## pca_grouplabel, fig_width=12,fig_height=12")
-pca+ggrepel::geom_label_repel(aes(label=group),size=I(4),alpha=I(1))+ggtitle('PCA : labelled by group')
-pca+ggtitle('PCA : labelled by group')
-
-
-```
-
-```{r topn heatmap}
-cat("## heatmap")
-
-# dual scale settings for heatmaps
-## setting values outside of the range [z_min, z_max] to the limiting values
-if(!exists('z_max')) z_max <-  3.5
-if(!exists('z_min')) z_min <- -3.5
-# colnames(rld_df) %<>% {stringr::str_replace(.,'sample_id','sample_name')}
-plot_heatmap_fluc_features(2000, rld_df, z_min = z_min, z_max = z_max)
-
-my_counts%<>%group_by(sample_name)%>%
-  mutate(countclass = case_when(
-    count > 1000 ~ '> 1000',
-    count > 100 ~ '> 100',
-    count > 32 ~ '> 32',
-    count > 8 ~ '> 8',
-    count > 0 ~ '< 8',
-    count ==0 ~ ' 0 ',
-    TRUE ~ 'NA'
-  ))
-
-my_counts$countclass%<>%factor(levels=c('> 1000','> 100','> 32','> 8','< 8',' 0 '))
-stopifnot(!any(is.na(my_counts$countclass)))
-
-
-my_counts%>%
-  group_by(sample_name,countclass)%>%tally%>%spread(countclass,n)%>%.[rev(colnames(.))]%>%select(sample_name,everything())%>%kable(label='gene count classes')
-
-```
-
-qc plots above
-
-# Differential expression
-
-```{r, results='asis'}
-
-trim_gids <- function(df){
-    df=as.data.frame(df);
-    df%>%mutate_at(vars(matches('gene_id|feature_id')),list(~str_replace(.,'\\.\\d+','')))
-}
-resultslist %<>% map(.%>%as.data.frame%>%trim_gids)
-
-contrast = names(resultslist)[[4]]
-regdirfuncs = list(Up=identity,Down=function(x)x * -1)
-regdir='Up'
-
-for(contrast in names(resultslist)){
-  for(regdir in names(regdirfuncs)){
-    regdirfunc = regdirfuncs[[regdir]]
-    res = resultslist[[contrast]]%>%as.data.frame%>%trim_gids
-     
-    print(qplot(data = res, log10(baseMean), log2FoldChange , size=I(0.2), color= padj < 0.05)+theme_bw()+scale_color_manual(values=c('black','red')))
-    
-    
-    library(DT)
-      reg_features = res%>%filter(padj<0.05,regdirfunc(log2FoldChange) > l2fc_threshold) 
-      num_reg <- nrow(reg_features)
-      
-      cat("${regdir} regulated feature: ${num_reg}")
-
-      reg_features %>% select(-matches('contrast')) %>%
-        left_join(gid2gname%>%select(gene_id,gene_name))%>%
-        select(gene_name,gene_id,baseMean,log2FoldChange,padj,everything())%>%
-        DT::datatable(rownames = F,escape = F,extensions = 'Buttons', 
-                  options = list(
-                    dom='Bfrtip',
-                    buttons = list(
-                      list(
-                        extend='csv',
-                        buttons=c('csv'),
-                        text='download')
-                    )
-                  )
-        )
-  }
-}
 ```
 
 
@@ -449,6 +330,10 @@ changecols<-c('#1db220','#737373','#fef636','#b31261')%>%setNames(c("TE only", "
 ## Contrasts Enrichment
 
 ```{r,eval=F}
+
+
+
+
 base::source(here('src/gofuncs.R'))
 GTOGO <- select(GTOGO,gene_name,go_id,gene_id)%>%filter(gene_id %in% (rownames(normcounts)%>%str_replace(.,'\\.\\d+','')))%>%group_by(go_id)%>%filter(n()>10)
 
@@ -504,7 +389,7 @@ dir.create('tables')
 counts(dds)%>%as.data.frame%>%rownames_to_column('gene_id')%>%write_tsv(here('tables/rawcountdata.tsv'))
 tx_countdata$abundance%>%as.data.frame%>%rownames_to_column('gene_id')%>%left_join(gid2gname)%>%write_tsv(here('tables/tpms.tsv'))
 #all coefficient, fold changes
-resultslist%>%map_df(.id='contrast',as.data.frame)%>%write_tsv(here('tables/allcontrasts.tsv'))
+resultslist%>%map_df(.id='contrast',as.data.frame)%>%left_join(gid2gname,by='gene_id')%>%write_tsv(here('tables/allcontrasts.tsv'))
 
 # #mapping from GO terms to genes
 # GTOGO%>%write_tsv(here('tables/go_gene_map.tsv'))

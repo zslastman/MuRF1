@@ -35,7 +35,10 @@ l2fc_threshold <- 0.32
 ```
 
 ```{r dds, include=FALSE, echo=FALSE, eval=TRUE}
-
+  trim_gids <- function(df){
+    df=as.data.frame(df);
+    df%>%mutate_at(vars(matches('gene_id|feature_id')),list(~str_replace(.,'\\.\\d+','')))
+  }
 #this perl creates a file with unique gene_id, gene_name in pairs, faster than loading the whole gtf if it's big
 # perl -lane '/gene_name\W+(\w+)\W/ ;my $a=$1;/gene_id\W+(\w+)\W/; print($a,"\t",$1)' <(cat  pipeline/genes.chrnm.gtf) | uniq | sort | uniq > pipeline/gid_2_gname.txt
 # gtf <- here('pipeline/genes.chrnm.gtf')
@@ -138,7 +141,10 @@ contrasts <- list(
   "Ctrl_MT_A72_vs_MT0" = with(sgroupvects,MT_Ctrl72 - MT),
   "Aspecific_MT_A24_vs_MT" = with(sgroupvects,(MT_A24 - MT) - (MT_Ctrl24 - MT)),
   "Aspecific_MT_A72_vs_MT_A24" = with(sgroupvects,(MT_A72 - MT_A24) - (MT_Ctrl72 - MT_Ctrl24)),
-  "Aspecific_MT_A72_vs_MT0" = with(sgroupvects,(MT_A72 - MT) - (MT_Ctrl72 - MT))
+  "Aspecific_MT_A72_vs_MT0" = with(sgroupvects,(MT_A72 - MT) - (MT_Ctrl72 - MT)),
+  "FullEff_MT_A24_vs_MT" = with(sgroupvects,MT_A24 - MT),
+  "FullEff_MT_A72_vs_MT_A24" = with(sgroupvects,MT_A72 - MT_A24),
+  "FullEff_MT_A72_vs_MT0" = with(sgroupvects,MT_A72 - MT)
 )
 
 #check the contrasts
@@ -160,13 +166,14 @@ cat('tested contrasts')
 
 ```{r runcontrasts,eval=TRUE}
 #you might want to use vst if there's a lot of data, for speed
+# file.remove(here('data/resultslist.rds'))
 dir.create(here('data'))
 if(!file.exists(here('data/resultslist.rds'))){
 	design(dds) <- design
  
   dds <- DESeq(dds,betaPrior = F)
   #and get the contrasts we need
-  resultslist <- lapply(contrasts,results,object = dds)
+  resultslist <- lapply(contrasts,DESeq2::results,object = dds)
   names(resultslist) <- names(contrasts)
   for(i in seq_along(resultslist))resultslist[[i]]$gene_id = rownames(dds)
   
@@ -174,14 +181,10 @@ if(!file.exists(here('data/resultslist.rds'))){
   ddsLRT = DESeq(dds, test="LRT", full=~group,reduced = ~ 1)
   changegenes <- results(ddsLRT)%>%ddstodf %>%subset%>%filter(padj < 0.05)%>%.$gene_id
   saveRDS(changegenes,here('data/changegenes.rds'))
-  trim_gids <- function(df){
-    df=as.data.frame(df);
-    df%>%mutate_at(vars(matches('gene_id|feature_id')),list(~str_replace(.,'\\.\\d+','')))
-  }
+
   resultslist %<>% map(.%>%as.data.frame%>%trim_gids)
   
   saveRDS(resultslist,here('data/resultslist.rds'))
-  
   
 
   
@@ -432,8 +435,8 @@ datatable(fcsetdf%>%left_join(gid2gname)%>%select(gene_name,gene_id,set),filter=
 ## 24h-72h Change
 
 ```{r,eval=TRUE,cache=TRUE}
-fcsetdflate = resultslist$Aspecific_MT_A72_vs_MT%>%select(Spec_72_padj =padj, Spec_72_lfc = log2FoldChange,gene_id)%>%
-    left_join(resultslist$Ctrl_MT_A72_vs_MT%>%as.data.frame%>%
+fcsetdflate = resultslist$Aspecific_MT_A72_vs_MT_A24%>%select(Spec_72_padj =padj, Spec_72_lfc = log2FoldChange,gene_id)%>%
+    left_join(resultslist$Ctrl_MT_A72_vs_MT_A24%>%as.data.frame%>%
                 select(Ctl_72_padj =padj, Ctrl_72_lfc = log2FoldChange,gene_id))%>%
     filter(gene_id %in% highcountgenes)%>%
     mutate(
@@ -529,8 +532,9 @@ regdirfuncs = list(Up=identity,Down=function(x)x * -1)
 fc_df <- resultslist[["MT_vs_MB"]]
 regdirfunc=regdirfuncs[["Up"]]
 ont='BP'
+# file.remove(here('data/contrgotables.rds'))
 if(!file.exists(here('data/contrgotables.rds'))){
-  contrgotables<-map_df(.id='contrast',resultslist,function(fc_df){
+  contrgotables<-mclapply(mc.cores=4,resultslist,function(fc_df){
     map_df(.id='regdir',regdirfuncs,function(regdirfunc){
       map_df(.id='ontology',c('BP','MF','CC')%>%setNames(.,.),function(ont){
           siggenes = fc_df%>%{setNames((regdirfunc(.$log2FoldChange)>0) & (.$padj<0.05),.$gene_id)}
@@ -539,7 +543,7 @@ if(!file.exists(here('data/contrgotables.rds'))){
           
       })
     })
-  })
+  })%>%bind_rows(.id='contrast')
   saveRDS(contrgotables,here('data/contrgotables.rds'))
 }else{
   contrgotables<-readRDS(here('data/contrgotables.rds'))
@@ -569,6 +573,13 @@ for(contr in unique(contrgotables$contrast)){
 
 ```{r,eval=TRUE,cache=TRUE}
 library(DT)
+datatable <- purrr::partial(DT::datatable,
+            extensions = 'Buttons',
+         options = list(dom = 'Blfrtip',
+                           buttons = c('csv'),
+                           lengthMenu = list(c(10,25,50,-1),
+                                             c(10,25,50,"All"))))
+
 datatable(contrgotables%>%select(ontology,contrast,regdir,GO.ID,elimFisher,Term,Enrichment,Annotated,Significant,Expected),filter=c('top'))
 ```
 
@@ -576,7 +587,10 @@ datatable(contrgotables%>%select(ontology,contrast,regdir,GO.ID,elimFisher,Term,
 
 ```{r,eval=TRUE,cache=TRUE}
 library(DT)
-datatable(GTOGO,filter=c('top'))
+gos = GTOGO$go_id%>%unique%>%intersect(keys(GOTERM))
+terms = Term(GOTERM[gos])%>%enframe('go_id','term')
+GTOGO%>%inner_join(terms,by='go_id')%>%
+datatable(filter=c('top'))
 ```
 
 # Output Tables
