@@ -14,10 +14,12 @@
 # We want to:
 # - load the neddylation data
 # - process it so it matches our fold changes
+# - print fold change plots
+# - output some tables
+#
 
 library(tidyverse);
 library(data.table);
-# library(ggExtra)
 library(magrittr);
 
 # +
@@ -26,14 +28,12 @@ library(here)
 mg132_gnms = suppressMessages(readxl::read_xlsx('../ext_data/lobatogil_etal_2021_s1.xlsx',sheet=3))[[2]]%>%.[!is.na(.)]
 nedd8ko_gnms = suppressMessages(readxl::read_xlsx('../ext_data/lobatogil_etal_2021_s1.xlsx',sheet=3))[[5]]
 
-length(mg132_gnms)
-length(nedd8ko_gnms)
+message(str_interp('${length(mg132_gnms)} mg132 gene names'))
+message(str_interp('${length(nedd8ko_gnms)} nedd8 ko gene names'))
 
-mg132_gnms%>%tail
-nedd8ko_gnms%>%tail
+
 
 lobato_gnms = bind_rows(.id='lobato_set', mg132=tibble(gnm=mg132_gnms), nedd8ko = tibble(gnm=nedd8ko_gnms))
-tail(lobato_gnms)
 #readxl::excel_sheets('../ext_data/lobatogil_etal_2021_s1.xlsx',sheet=3)
 # -
 
@@ -69,7 +69,7 @@ lobato_gnm_orth%>%group_by(gnm)%>%summarise(noorth=any(mgid!=''))%>%.$noorth%>%t
 
 # -
 
-# # Now we load up our fold changes as well
+# # Load mRNA fold changes and intersect with lobato IDs
 
 resultslist <- readRDS(here('data/resultslist.rds'))
 mrna_gids = resultslist[[1]]$gene_id
@@ -77,36 +77,189 @@ message('ow many of these genes have at least one ortholog appearing our annotat
 lobato_gnm_orth%>%group_by(gnm)%>%summarise(inmrna_dat = any(mgid %in% mrna_gids))%>%.$inmrna_dat%>%table
 
 
+# ## Now print plots comparing our mRNA fold changes for the two sets to the general distribution
+
 # +
 options(jupyter.plot_mimetypes = "image/svg+xml") 
 
+options(repr.plot.width=21, repr.plot.height=7)
+inner_q <- function(v,q=0.99){
+    trim = (1 - q)/2
+    (v >= quantile(v,trim)) & (v <= quantile(v,1-trim))
+}
+
+squish <- function(v,q=0.99){
+    trim = (1 - q)/2
+    lower = quantile(v,trim)
+    upper = quantile(v,1-trim)
+    v%>%pmax(lower)%>%pmin(upper)
+}
 
 
 contrasts = names(resultslist)
 contrast = contrasts[[1]]
 
-lobato_lfc_df = resultslist[[contrast]]%>%left_join(lobato_gnm_orth,by=c('gene_id'='mgid'))%>%distinct(lobato_set,gnm,log2FoldChange)
-lobato_lfc_df%>%sample_n(4)
+get_lobatoset_histogram <- function(contrast){
+    lobato_lfc_df = resultslist[[contrast]]%>%
+        left_join(lobato_gnm_orth,by=c('gene_id'='mgid'))%>%
+        distinct(lobato_set,gnm,log2FoldChange,padj)
+    
+    # lobato_lfc_df%>%sample_n(4)
 
-lobato_lfc_df%>%qplot(data=.,fill=lobato_set,x=log2FoldChange,geom='histogram')+facet_grid(lobato_set~.,scale='free_y')
+    # lobato_lfc_df%>%
+    #     filter(!is.na(log2FoldChange))%>%
+    #     filter(!is.na(lobato_set)|inner_q(log2FoldChange,0.99))%>%
+    #     qplot(data=.,fill=lobato_set,x=log2FoldChange,geom='histogram')+facet_grid(lobato_set~.,scale='free_y')+
+    #     ggtitle(str_interp('distribution of Neddylation classes for ${contrast}'))
 
+    
+    ggdf=lobato_lfc_df%>%
+        filter(padj<0.05)%>%
+        mutate(log2FoldChange = squish(log2FoldChange))
+    ggdf$lobato_set%<>%replace_na('other')
+    lfclist = split(ggdf$log2FoldChange,ggdf$lobato_set)
+    library(broom)
+    mg132less = wilcox.test(alternative = 'less',lfclist[['mg132']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    mg132more = wilcox.test(alternative = 'greater',lfclist[['mg132']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    nedd8less = wilcox.test(alternative = 'less',lfclist[['nedd8ko']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    nedd8more = wilcox.test(alternative = 'greater',lfclist[['nedd8ko']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
 
+    
+
+    ggdf%>%
+        qplot(data=.,fill=lobato_set,x=log2FoldChange,geom='blank')+facet_grid(lobato_set~.,scale='free_y')+
+        geom_histogram(binwidth=0.5)+
+        scale_x_continuous(breaks=function(l)seq(floor(l[1]),ceiling(l[2])))+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=mg132less,x=-Inf,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=mg132more,x=Inf,y=Inf),hjust=1,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=nedd8less,x=-Inf,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=nedd8more,x=Inf,y=Inf),hjust=1,vjust=1)+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=length(lfclist$mg132),x=0,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=length(lfclist$nedd8ko),x=0,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='other'),aes(label=length(lfclist[['other']]),x=0,y=Inf),hjust=0,vjust=1)+
+        ggtitle(str_interp('distribution of mRNA log fold change for nedlation classes, \n contrast: ${contrast}'))
+    #     coord_cartesian(xlim=c(-10,10))
+}
+plots = lapply(contrasts,get_lobatoset_histogram)
+ggpubr::ggarrange(plotlist=plots,ncol=4)
 # -
-
-ggpubr::ggarrange(nrow=1,plotlist=list(
-    ggMarginal(deneddata%>%filter(inner_q(Intensity,.99))%>%qplot(data=.,log10(1+Intensity),log10(1+`Intensity MG_1`),geom='blank')+  geom_point(),type='histogram'),
-    deneddata%>%filter(inner_q(Intensity,.99))%>%qplot(data=.,1+`Intensity MG_2`,1+`Intensity MG_1`,log='xy')
-    ))
-
-
-library(orthologsBioMART)
-orthos <- findOrthologsHsMm(from_filters = "hgnc_symbol",
-  from_values = c("TP53","TERT"), 
-  to_attributes = "external_gene_name")
-print(orthos)
 
 # ## Now compare the nedylation data to our proteomic fold changes
 
+# +
+tmtdata = fread(here('ext_data/Results_Proteome_20210115.txt'))
+
+gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%set_colnames(c('gnm','g_id'))
+mtmtdata = tmtdata%>%dplyr::rename('gnm':=id)%>%filter(gnm %in% gid2gname$gnm)
 
 
-ned
+
+tmtcols <- c(
+  "logFC.diff_atrophy_8.over.diff_atrophy_10",
+  "logFC.diff_Ctr_10.over.diff_atrophy_10",
+  "logFC.diff_Ctr_7.over.diff_atrophy_10",
+  "logFC.diff_Ctr_8.over.diff_atrophy_10",
+  "logFC.undiff_Ctr_0.over.diff_atrophy_10",
+  "logFC.diff_Ctr_10.over.diff_atrophy_8",
+  "logFC.diff_Ctr_7.over.diff_atrophy_8",
+  "logFC.diff_Ctr_8.over.diff_atrophy_8",
+  "logFC.undiff_Ctr_0.over.diff_atrophy_8",
+ "logFC.diff_Ctr_7.over.diff_Ctr_10",
+ "logFC.diff_Ctr_8.over.diff_Ctr_10",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_10",
+ "logFC.diff_Ctr_8.over.diff_Ctr_7",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_7",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_8"
+)%>%setNames(.,.)
+
+
+# +
+tmtcol = tmtcols[[1]]
+tmtpcol=tmtcol%>%str_replace('logFC','adj.P.Val')
+
+get_lset_prot_histogram <- function(tmtcol){
+    tmtpcol=tmtcol%>%str_replace('logFC','adj.P.Val')
+    plobato_lfc_df = mtmtdata%>%select(gnm,log2FoldChange=!!tmtcol,padj = !!tmtpcol)%>%
+        left_join(lobato_gnm_orth%>%dplyr::rename('mgnm':=`Mouse gene name`),by=c('gnm'='mgnm'))%>%
+        distinct(lobato_set,gnm,log2FoldChange,padj)
+    
+
+    # lobato_lfc_df%>%sample_n(4)
+
+    # lobato_lfc_df%>%
+    #     filter(!is.na(log2FoldChange))%>%
+    #     filter(!is.na(lobato_set)|inner_q(log2FoldChange,0.99))%>%
+    #     qplot(data=.,fill=lobato_set,x=log2FoldChange,geom='histogram')+facet_grid(lobato_set~.,scale='free_y')+
+    #     ggtitle(str_interp('distribution of Neddylation classes for ${contrast}'))
+
+    
+    ggdf=plobato_lfc_df%>%
+        filter(padj<0.05)%>%
+        mutate(log2FoldChange = squish(log2FoldChange))
+    ggdf$lobato_set%<>%replace_na('other')
+    lfclist = split(ggdf$log2FoldChange,ggdf$lobato_set)
+    library(broom)
+    mg132less = wilcox.test(alternative = 'less',lfclist[['mg132']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    mg132more = wilcox.test(alternative = 'greater',lfclist[['mg132']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    nedd8less = wilcox.test(alternative = 'less',lfclist[['nedd8ko']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+    nedd8more = wilcox.test(alternative = 'greater',lfclist[['nedd8ko']],lfclist[['other']])%>%tidy%>%{formatC(.$p.value, format = "e", digits = 2)}
+
+    
+
+    plot = ggdf%>%
+        qplot(data=.,fill=lobato_set,x=log2FoldChange,geom='blank')+facet_grid(lobato_set~.,scale='free_y')+
+        geom_histogram(binwidth=0.5)+
+        scale_x_continuous(breaks=function(l)seq(floor(l[1]),ceiling(l[2])))+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=mg132less,x=-Inf,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=mg132more,x=Inf,y=Inf),hjust=1,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=nedd8less,x=-Inf,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=nedd8more,x=Inf,y=Inf),hjust=1,vjust=1)+
+        geom_text(data=tibble(lobato_set='mg132'),aes(label=length(lfclist$mg132),x=0,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='nedd8ko'),aes(label=length(lfclist$nedd8ko),x=0,y=Inf),hjust=0,vjust=1)+
+        geom_text(data=tibble(lobato_set='other'),aes(label=length(lfclist[['other']]),x=0,y=Inf),hjust=0,vjust=1)+
+        ggtitle(str_interp('distribution of mRNA log fold change for nedlation classes, \n contrast: ${tmtcol}'))
+    #     coord_cartesian(xlim=c(-10,10))
+    list(plot,ggdf)
+}
+plots = lapply(tmtcols,get_lset_prot_histogram)
+ggdfs = plots%>%map(2)
+plots = plots%>%map(1)
+ggpubr::ggarrange(plotlist=plots,ncol=4)
+                           
+# -
+
+
+# ## Finally, export table con
+
+# ggdfs%>%bind_rows(.id='MS_contrast')%>%filter(lobato_set!='other')%>%spread(MS_contrast)
+ggdfs%>%bind_rows(.id='MS_contrast')%>%filter(lobato_set!='other')%>%write_tsv('../tables/lobato_tmt.tsv')
+# + active=""
+# ## we want to know what percentage of the lobato sets are up/down/either regulated at each timepoint
+# +
+
+# lobato_gnm_orth%>%filter('%>%distinct(gnm)%>%left_join()
+
+iset = lobato_gnm_orth$lobato_set%>%unique%>%head(1)
+
+isetgnms = lobato_gnm_orth%>%filter(lobato_set==iset)%>%select(gnm=`Mouse gene name`)%>%distinct%>%filter(gnm!='')%>%.[[1]]
+
+isets = lobato_gnm_orth$lobato_set%>%unique%>%head(2)
+updownpcdf = map_df(.id='lobato_set',isets%>%setNames(isets),function(iset){
+ ggdfs%>%bind_rows(.id='MS_contrast')%>%filter(gnm %in% isetgnms)%>%
+    mutate(dir=ifelse(log2FoldChange>0,'up','down'))%>%
+    group_by(MS_contrast,dir)%>%tally%>%
+    mutate(pc_set = n / length(isetgnms))
+})
+
+updownpcdf%>%write_tsv('../tables/lobato_pc_reg.tsv')
+
+# lobato_gnm_orth%>%select(lobato_set,gnm=`Mouse gene name`)%>%distinct%>%left_join(ggdfs%>%bind_rows(.id='MS_contrast'))%>%
+#     mutate(dir=ifelse(log2FoldChange>0,'up','down'))%>%select(lobato_set,gnm,MS_contrast,dir)%>%mutate(tmp=TRUE)%>%spread(dir,tmp)%>%
+#     select(-`<NA>`)%>%
+#     group_by(MS_contrast)
+# -
+
+updownpcdf$MS_contrast%<>%str_replace('logFC.(un)?diff_','')%>%str_replace('.over.diff.','.vs.\n')
+updownpcdf %>% ggplot(data=.,aes(y=pc_set,x=dir,fill=dir))+stat_identity(geom='bar')+facet_grid(lobato_set~MS_contrast)
+
+

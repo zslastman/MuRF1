@@ -1,8 +1,17 @@
-uniprotmap = fread('ext_data/silac/silac_out.txt')%>%set_colnames(c('UniprotID','tr_ids'))
-unmappeduniprot = 'ext_data/silac/unmapped_uniprot.txt'%>%fread%>%set_colnames(c('UniprotID'))%>%tail(-1)
-uniprotfaids = fread('grep -e \'>\' ../cortexomics/ext_data/uniprot.MOUSE.2014-10.fasta',header=F)%>%mutate(mousename=str_extract(V3,'\\w+'))
-silacdata = fread('ext_data/silac/20110913_Jida_2x4, r2_Diff_and_atrophy_für_Gunnar.txt')
-silacdata = readxl::read_xlsx('ext_data/2021Jan_Results_Proteome.xlsx',sheet=1)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(DESeq2)
+library(data.table)
+
+base::source(here('src/Rprofile.R'))
+uniprotmap = fread(here('ext_data/silac/silac_out.txt'))%>%set_colnames(c('UniprotID','tr_ids'))
+unmappeduniprot = here('ext_data/silac/unmapped_uniprot.txt')%>%fread%>%set_colnames(c('UniprotID'))%>%tail(-1)
+uniprotfaids = fread(str_interp('grep -e \'>\' ${here("../cortexomics/ext_data/uniprot.MOUSE.2014-10.fasta")}'),header=F)%>%mutate(mousename=str_extract(V3,'\\w+'))
+silacdata = fread(here('ext_data/silac/20110913_Jida_2x4, r2_Diff_and_atrophy_für_Gunnar.txt'))
+silacdata = readxl::read_xlsx(here('ext_data/2021Jan_Results_Proteome.xlsx'),sheet=1)
+tmtdata = fread(here('ext_data/Results_Proteome_20210115.txt'))
+# silacdata = readxl::read_xlsx('ext_data/2021Jan_Results_Proteome.xlsx',sheet=1)
 
 inclusiontable<-function(a,b){
 	u = union(a,b)
@@ -115,91 +124,101 @@ allunimatch%<>%select(-tr_ids)
 ################################################################################
 ########Easy way - just take inambig gene name matchesj
 ################################################################################
-matchsilac = silacdata%>%filter(!str_detect(GeneNames,';'))%>%filter(GeneNames%>%is_in(gid2gname$gnm))
 
-tx2gene <-  read_tsv(here('pipeline/gid_2_trid.txt.gz'))%>%set_colnames(c('g_id','tr_id'))
+gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%set_colnames(c('gnm','g_id'))
+mtmtdata = tmtdata%>%rename('gnm':=id)%>%filter(gnm %in% gid2gname$gnm)
 
-silacmatch = silacdata%>%select(Uniprot,GeneNames)%>%
-	mutate(UniprotID = str_split(Uniprot,';'))%>%
-	unnest(UniprotID)%>%
-	left_join(allunimatch,by='UniprotID')%>%
-	left_join(tx2gene,by='tr_id')%>%
-	left_join(gid2gname,by='g_id')	
 
-#how often does stuff map to more than one gene
-silacmatch%>%group_by(Uniprot)%>%summarise(gnms = n_distinct(gnm))%>%.$gnms%>%table
-silacmatchdf = silacmatch%>%group_by(Uniprot)%>%filter(n_distinct(gnm)==1)%>%distinct(gnm)
 
-msilacdata = silacdata%>%inner_join(silacmatchdf)
+tmt_LogFCcols = list(
+  "logFC.diff_atrophy_8.over.diff_atrophy_10",
+  "logFC.diff_Ctr_10.over.diff_atrophy_10",
+  "logFC.diff_Ctr_7.over.diff_atrophy_10",
+  "logFC.diff_Ctr_8.over.diff_atrophy_10",
+  "logFC.undiff_Ctr_0.over.diff_atrophy_10",
+  "logFC.diff_Ctr_10.over.diff_atrophy_8",
+  "logFC.diff_Ctr_7.over.diff_atrophy_8",
+  "logFC.diff_Ctr_8.over.diff_atrophy_8",
+  "logFC.undiff_Ctr_0.over.diff_atrophy_8",
+ "logFC.diff_Ctr_7.over.diff_Ctr_10",
+ "logFC.diff_Ctr_8.over.diff_Ctr_10",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_10",
+ "logFC.diff_Ctr_8.over.diff_Ctr_7",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_7",
+ "logFC.undiff_Ctr_0.over.diff_Ctr_8"
+)%>%setNames(.,.)
 
-msilacdata%>%colnames
+# matchsilac = silacdata%>%filter(!str_detect(GeneNames,';'))%>%filter(GeneNames%>%is_in(gid2gname$gnm))
 
-msilacdata = msilacdata
+# tx2gene <-  read_tsv(here('pipeline/gid_2_trid.txt.gz'))%>%set_colnames(c('g_id','tr_id'))
+
+# silacmatch = silacdata%>%select(Uniprot,GeneNames)%>%
+# 	mutate(UniprotID = str_split(Uniprot,';'))%>%
+# 	unnest(UniprotID)%>%
+# 	left_join(allunimatch,by='UniprotID')%>%
+# 	left_join(tx2gene,by='tr_id')%>%
+# 	left_join(gid2gname,by='g_id')	
+
+# #how often does stuff map to more than one gene
+# silacmatch%>%group_by(Uniprot)%>%summarise(gnms = n_distinct(gnm))%>%.$gnms%>%table
+# silacmatchdf = silacmatch%>%group_by(Uniprot)%>%filter(n_distinct(gnm)==1)%>%distinct(gnm)
+
+
 
 ###comapre MT to MB transition
-{
-mtmbsilac = msilacdata%>%select(gnm,lfc_MT_MB = Ratio.M.L.Normalized.Eluate,pval_MT_MB = Ratio.M.L.Significance.B..Eluate)
+# {
+# mtmbtmt = mtmtdata%>%select(gnm,lfc_MT_MB = Ratio.M.L.Normalized.Eluate,pval_MT_MB = Ratio.M.L.Significance.B..Eluate)
 
-mrnachagne = resultslist$MT_vs_MB%>%select(gene_id,log2FoldChange,padj)%>%left_join(gid2gname,by=c(gene_id='g_id'))
+# mrnachagne = resultslist$MT_vs_MB%>%select(gene_id,log2FoldChange,padj)%>%left_join(gid2gname,by=c(gene_id='g_id'))
 
-mrna_silac_df = mtmbsilac%>%left_join(mrnachagne)
+# mrna_tmt_df = mtmbtmt%>%left_join(mrnachagne)
+# }
 
-{
-cortext = mrna_silac_df%>%filter(padj<0.05)%>%
-# filter(gnm!='Hspd1')%>%
-{cor.test(.$log2FoldChange,.$lfc_MT_MB)}%>%tidy%>%
-	{str_interp('rho = ${round(.$estimate,3)},p = ${format(.$p.value,3,digits=2)}')}
+resultslist <- readRDS(here('data/resultslist.rds'))
+dds <- readRDS(here('data/dds.rds'))
 
-#now plot
-plotfile<- here(paste0('plots/','mrna_v_silac_fc_mt_mb','.pdf'))
-pdf(plotfile)
-print(
-	mrna_silac_df%>%
-	filter(padj<0.05)%>%
-	ggplot(.,aes(x=log2FoldChange,y=log2(lfc_MT_MB)))+
-	geom_point()+
-	scale_x_continuous(paste0('mRNA Fold Change'))+
-	scale_y_continuous(paste0('Silac Fold Change (Ratio.M.L.Normalized.Eluate)'))+
-	ggtitle(paste0('Silac vs mRNA MT vs MB\nSignificant mRNA Change Only'),sub=cortext)+
-	# geom_text(data=NULL,aes(label=cortext,x=Inf,y=-Inf),hjust=-1,vjust=1)+
-	theme_bw()
-)
-dev.off()
-message(normalizePath(plotfile))
-}
-}
+
+# {
+# cortext = mrna_silac_df%>%filter(padj<0.05)%>%
+# # filter(gnm!='Hspd1')%>%
+# {cor.test(.$log2FoldChange,.$lfc_MT_MB)}%>%tidy%>%
+# 	{str_interp('rho = ${round(.$estimate,3)},p = ${format(.$p.value,3,digits=2)}')}
+
+# #now plot
+# plotfile<- here(paste0('plots/','mrna_v_silac_fc_mt_mb','.pdf'))
+# pdf(plotfile)
+# print(
+# 	mrna_silac_df%>%
+# 	filter(padj<0.05)%>%
+# 	ggplot(.,aes(x=log2FoldChange,y=log2(lfc_MT_MB)))+
+# 	geom_point()+
+# 	scale_x_continuous(paste0('mRNA Fold Change'))+
+# 	scale_y_continuous(paste0('Silac Fold Change (Ratio.M.L.Normalized.Eluate)'))+
+# 	ggtitle(paste0('Silac vs mRNA MT vs MB\nSignificant mRNA Change Only'),sub=cortext)+
+# 	# geom_text(data=NULL,aes(label=cortext,x=Inf,y=-Inf),hjust=-1,vjust=1)+
+# 	theme_bw()
+# )
+# dev.off()
+# message(normalizePath(plotfile))
+# }
+
 
 #resultslist$MT_vs_MB                    resultslist$Ctrl_MT_A72_vs_MT0          resultslist$Aspecific_MT_A72_vs_MT0
 #resultslist$Ctrl_MT_A24_vs_MT           resultslist$Aspecific_MT_A24_vs_MT      resultslist$Ctrl_MT_Amtmbsilac
 #resultslist$Ctrl_MT_A72_vs_MT_A24       resultslist$Aspecific_MT_A72_vs_MT_A24
-{
-silaccol='Ratio.H.M.Normalized.Eluate'
-mtmbsilac = msilacdata%>%select(gnm,lfc_silac = !!sym(silaccol),pval_MT_MB = Ratio.H.M.Significance.B..Eluate)
-contr='FullEff_MT_A24_vs_MT'
-contr='Ctrl_MT_A24_vs_MT'
-mrnachagne = resultslist[[contr]]%>%select(gene_id,log2FoldChange,padj)%>%left_join(gid2gname,by=c(gene_id='g_id'))
 
-mrna_silac_df = mtmbsilac%>%left_join(mrnachagne)
-
-{
-cortext = mrna_silac_df%>%filter(padj<0.05)%>%{cor.test(.$log2FoldChange,.$lfc_silac)}%>%tidy%>%
-	{str_interp('rho = ${round(.$estimate,3)} (${round(.$conf.low,3)} - ${round(.$conf.high,3)} ),p = ${format(.$p.value,3,digits=2)}')}
-
-#now plot
-plotfile<- here(paste0('plots/','mrna_v_silac_fc_amt_mt','.pdf'))
-pdf(plotfile)
-print(
-	mrna_silac_df%>%
-	filter(padj<0.05)%>%
-	ggplot(.,aes(x=log2FoldChange,y=log2(lfc_silac)))+
-	geom_point()+
-	scale_x_continuous(paste0('mRNA Fold Change (',contr,')'))+
-	scale_y_continuous(paste0('Silac Fold Change (',silaccol,')'))+
-	ggtitle(paste0('Silac vs mRNA'),sub=cortext)+
-	# geom_text(data=NULL,aes(label=cortext,x=Inf,y=-Inf),hjust=-1,vjust=1)+
-	theme_bw()
-)
-dev.off()
-message(normalizePath(plotfile))
-}
-}
+#  [1] "logFC.diff_atrophy_8_T8D.over.diff_atrophy_10_T10D"
+#  [2] "logFC.diff_Ctr_10_T10E.over.diff_atrophy_10_T10D"
+#  [3] "logFC.diff_Ctr_7_T7.over.diff_atrophy_10_T10D"
+#  [4] "logFC.diff_Ctr_8_T8E.over.diff_atrophy_10_T10D"
+#  [5] "logFC.undiff_Ctr_0_T0.over.diff_atrophy_10_T10D"
+#  [6] "logFC.diff_Ctr_10_T10E.over.diff_atrophy_8_T8D"
+#  [7] "logFC.diff_Ctr_7_T7.over.diff_atrophy_8_T8D"
+#  [8] "logFC.diff_Ctr_8_T8E.over.diff_atrophy_8_T8D"
+#  [9] "logFC.undiff_Ctr_0_T0.over.diff_atrophy_8_T8D"
+# [10] "logFC.diff_Ctr_7_T7.over.diff_Ctr_10_T10E"
+# [11] "logFC.diff_Ctr_8_T8E.over.diff_Ctr_10_T10E"
+# [12] "logFC.undiff_Ctr_0_T0.over.diff_Ctr_10_T10E"
+# [13] "logFC.diff_Ctr_8_T8E.over.diff_Ctr_7_T7"
+# [14] "logFC.undiff_Ctr_0_T0.over.diff_Ctr_7_T7"
+# [15] "logFC.undiff_Ctr_0_T0.over.diff_Ctr_8_T8E"
