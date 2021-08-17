@@ -124,8 +124,10 @@ allunimatch%<>%select(-tr_ids)
 ################################################################################
 ########Easy way - just take inambig gene name matchesj
 ################################################################################
-
-gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%set_colnames(c('gnm','g_id'))
+library(data.table)
+library(here)
+gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%
+	set_colnames(c('gnm','g_id'))
 mtmtdata = tmtdata%>%rename('gnm':=id)%>%filter(gnm %in% gid2gname$gnm)
 
 
