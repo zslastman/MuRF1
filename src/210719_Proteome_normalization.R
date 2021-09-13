@@ -10,6 +10,8 @@ library(limma)
 library(DESeq2)
 # BiocManager::install("version=3.12")
 
+rename <- dplyr::rename
+slice <- dplyr::slice
 # setwd("C:/Users/snakaga/MDC/Labbook/MassSpec/Differential time course and atrophy/normalization_struggles")
 data<-read.delim("ext_data/proteinGroups_withNewPlex1.txt", sep="\t", header=TRUE)
 
@@ -84,14 +86,14 @@ notuniquedata <- cleandata %>%
   filter(Peptides.Plex1>=2|Peptides.Plex2>=2)
 
 #Select only treatment group columns and add genenames column
-new_uniquedata<-filter(uniquedata[,76:107])
+udata_sel <-filter(uniquedata[,76:107])
 Genenames<- uniquedata$Gene.names
-new_uniquedata$Gene.names<-Genenames
-new_uniquedata<-new_uniquedata%>%
+udata_sel $Gene.names<-Genenames
+udata_sel <-udata_sel %>%
   relocate(Gene.names)
-# new_uniquedata%>%across(vars(matches('_\\d')),median)
+# udata_sel %>%across(vars(matches('_\\d')),median)
 #also select the row with the highest median for each gene
-gnmbestrows = new_uniquedata%>%
+gnmbestrows = udata_sel %>%
   ungroup%>%
   mutate(row=1:n())%>%
   pivot_longer(-one_of('row','Gene.names'))%>%
@@ -100,7 +102,7 @@ gnmbestrows = new_uniquedata%>%
   group_by(Gene.names)%>%
   dplyr::slice(which.max(value))%>%
   .$row
-new_uniquedata <- new_uniquedata[gnmbestrows,]
+new_uniquedata  <- udata_sel [gnmbestrows,]
 new_uniquedata$Gene.names%<>%as.character
 #
 stopifnot(!new_uniquedata$Gene.names%>%duplicated%>%any)
@@ -117,6 +119,10 @@ new_uniquedata[,-1] <-log(new_uniquedata[,-1],2)
 #remove -Inf entries i.e. those w/ 0.00 prior to log2 transform
 new_uniquedata<-new_uniquedata%>%
   filter_at(vars(2:33), all_vars(!is.infinite(.)))
+
+
+colnames(new_uniquedata[,-1])==colnames(udata_sel[,-1])
+
 
 # View(new_uniquedata)
 # View(uniquedata)
@@ -171,7 +177,7 @@ gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%
 # gid2gname <- setNames(gid2gname$gnm,gid2gname$g_id)
 
 dds <- readRDS('data/dds.rds')
-design(dds) <- 'group'
+design(dds) <- as.formula('~group')
 dds <- DESeq(dds)
 resnames <- c("Intercept", "group_MT_vs_MB", "group_MT_A24_vs_MB", "group_MT_A72_vs_MB", 
 "group_MT_Ctrl24_vs_MB", "group_MT_Ctrl72_vs_MB")
@@ -230,11 +236,8 @@ normfuncs = c(
   'none'=identity,
   'bestNormalize'=function(x)bestNormalize::orderNorm(x)$x.t,
   norm_MAD = norm_MAD,
-  norm_med = norm_med,
+  norm_med = norm_med
 )
-
-
-normfunc=normfuncs[[1]]
 
 
 
@@ -265,12 +268,6 @@ foldchange_comps = map_df(.id='batchcor',batchcordsets['onebatchcor'],function(m
         left_join(gid2gname,by='g_id')%>%
         filter(padj<0.05)%>%
         select(gnm,log2FoldChange)
-      # compdata = tpm_grp_df%>%
-      #   filter(sample_group==sampgroup)%>%
-      #   inner_join(enframe(msdata,'gnm','ms'))%>%
-      #   mutate_at(vars(tpm),log2)%>%
-      #   # filter_at(vars(tpm,ms),is.finite)%>%
-      #   identity
       compdata = rnaseqlfc%>%
         inner_join(enframe(mslfc,'gnm','ms_l2fc'),by='gnm')
       # tidy(cor.test(compdata$tpm,compdata$ms,use='complete'))
@@ -281,51 +278,19 @@ foldchange_comps = map_df(.id='batchcor',batchcordsets['onebatchcor'],function(m
   })
 })
 })
-stop()
 
-foldchange_comps = map_df(.id='batchcor',batchcordsets,function(msdataset){
-  map_df(.id='comptype',comparisontypes,function(comparisontype){
-  map_df(.id='normfunc',normfuncs,function(normfunc){
-    # lapply(sampgroup,function(stage){
-    map_df(.id='sample_pair',sampgroup_pairs,function(samppair){
-      # msdataset%<>%head
-      samp1=samppair[[1]]
-      samp2=samppair[[2]]
-      msdatacols1 = msdataset%>%colnames%>%
-        mscolnames_replace%>%
-        str_detect(paste0(samp1,'_\\d'))
-      msdatacols2 = msdataset%>%colnames%>%
-        mscolnames_replace%>%
-        str_detect(paste0(samp2,'_\\d'))
-      stopifnot(any(msdatacols1))
-      stopifnot(any(msdatacols2))
-      msdata1 = msdataset[,msdatacols1]%>%rowMeans(na.rm=T)%>%
-        setNames(rownames(msdataset))
-      msdata2 = msdataset[,msdatacols2]%>%rowMeans(na.rm=T)%>%
-        setNames(rownames(msdataset))
-      mslfc = (normfunc(msdata2) - normfunc(msdata1))
-      #
-      rnaseqlfc = results(dds,c('group',samp2,samp1))
-      rnaseqlfc= rnaseqlfc%>%as.data.frame%>%rownames_to_column('g_id')%>%
-        left_join(gid2gname,by='g_id')%>%
-        filter(padj<0.05)%>%
-        select(gnm,log2FoldChange)
-      # compdata = tpm_grp_df%>%
-      #   filter(sample_group==sampgroup)%>%
-      #   inner_join(enframe(msdata,'gnm','ms'))%>%
-      #   mutate_at(vars(tpm),log2)%>%
-      #   # filter_at(vars(tpm,ms),is.finite)%>%
-      #   identity
-      compdata = rnaseqlfc%>%
-        inner_join(enframe(mslfc,'gnm','ms_l2fc'),by='gnm')
-      # tidy(cor.test(compdata$tpm,compdata$ms,use='complete'))
-      cat('.')
-      tidy(cor.test(compdata$log2FoldChange,compdata$ms_l2fc,use='complete'))
-    })
-  })
-})
-})
+dir.create('tables')
 
+imap(normfuncs[c('none','norm_MAD','norm_med')],function(normfunc,normfuncname){
+udata_sel%>%
+  mutate_at(vars(-Gene.names),log2)%>%
+  {set_rownames(as.matrix(.[,-1]),.[,1])}%>%
+  removeBatchEffect(batch)%>%
+  normfunc%>%
+  as.data.frame%>%
+  rownames_to_column('gene_name')%>%
+  write_tsv(str_interp('tables/tmt_ms_${normfuncname}.tsv'))
+})
 
 foldchange_comps%>%select(batchcor,sample_pair,estimate,normfunc)%>%
   pivot_wider(values_from='estimate',names_from='sample_pair')
