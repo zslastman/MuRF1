@@ -172,7 +172,7 @@ library(magrittr)
 library(broom)
 
 
-gid2gname <- fread(here('pipeline/gid_2_gname.txt'),header=F)%>%
+gid2gname <- read_tsv(here('pipeline/gid_2_gname.txt'),col_names=F)%>%
   set_colnames(c('gnm','g_id'))
 # gid2gname <- setNames(gid2gname$gnm,gid2gname$g_id)
 
@@ -208,14 +208,17 @@ mscolnames_replace <- function(x){
 mscolnames_replace
 }
 
+
 sampgroup_pairs = list(
   c('MB','MT'),
   c('MT','MT_Ctrl24'),
   c('MT','MT_A24'),
-  c('MT','MT_Ctrl72'),
-  c('MT','MT_A72')
+  c('MT_Ctrl24','MT_Ctrl72'),
+  c('MT_Ctrl24','MT_A24'),
+  c('MT_Ctrl24','MT_Ctrl72'),
+  c('MT_Ctrl72','MT_A72'),
+  c('MT_A24','MT_A72')
 )%>%setNames(.,map_chr(.,paste0,collapse='_'))
-
 
 norm_MAD <- function(x) {
   (x - median(x, na.rm=T))/mad(x, na.rm=T)
@@ -239,8 +242,11 @@ normfuncs = c(
   norm_med = norm_med
 )
 
-
-
+stop()
+samppair=sampgroup_pairs[[1]]
+contrnm=names(sampgroup_pairs)[[1]]
+normfunc=identity
+library(DESeq2)
 foldchange_comps = map_df(.id='batchcor',batchcordsets['onebatchcor'],function(msdataset){
   map_df(.id='comptype',comparisontypes,function(comparisontype){
   map_df(.id='normfunc',normfuncs,function(normfunc){
