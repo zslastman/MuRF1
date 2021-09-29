@@ -1,0 +1,94 @@
+---
+title: "MuRF1 Interactive Quadrant plots"
+output: 
+ html_notebook:
+  toc: yes
+---
+  
+
+  
+# Setup
+  
+```{r loadinglibraries, include=FALSE, echo=FALSE, eval=T}
+knitr::opts_chunk$set(root.dir = here::here(),eval=TRUE,cache=FALSE,echo=FALSE,warning = FALSE,message = FALSE,include=TRUE,
+                      fig.width =7,fig.height=7,out.width=700,out.height=700,dev='png')
+
+library(rmarkdown)
+library(knitr)
+library(here)
+library(magrittr)
+library(stringr)
+library(ggplot2)
+
+dir.create(here('data'),showWarnings=F)
+dir.create(here('R_cache'),showWarnings=F)
+
+base::source(here::here('src/Rprofile.R'))
+
+
+```
+
+```{r, cache=TRUE}
+#devtools::install_github('yihui/htmlwidgets@feature/widget-list')
+
+datadfs <- Sys.glob(here(paste0('tables/*_lfc_sets.tsv')))
+plist = lapply(datadfs,function(datadf){
+	# for(datadf in datadfs[1:2]){
+	pdata <- datadf%>%read_tsv
+contrnm = basename(datadf)
+
+library(plotly)
+
+pdata <- pdata%>%group_by(gene_name)%>%
+	mutate(nmnum = seq_len(n()))%>%
+	mutate(lb_gnm = paste0(gene_name,ifelse(nmnum==1,'',paste0('__',nmnum))))
+
+
+plot = pdata%>%
+	set_rownames(.$lb_gnm)%>%
+  	filter(!is.na(sig_rna),!is.na(sig_dev))%>%
+  	ggplot(aes(logFC_rna,logFC_ms,color=set,label=lb_gnm))+
+  	geom_point(size=I(1),alpha=I(0.5))+
+  	theme_bw()+
+  	ggtitle(contrnm)+
+			guides(color = guide_legend(override.aes = list(size=5)))
+
+ggplotly(plot)
+})
+datadf <- datadfs[[1]]
+htmltools::tagList(plist)
+
+
+# rmarkdown::render(here('src/plotly.Rmd'),output_file=here('Reports/plotly.html'), intermediates_dir=here('Reports'),knit_root_dir=here('Reports')); message(normalizePath(here('Reports/plotly.html')))
+
+```
+
+
+RNAseq level changes.
+To compare changes at the transcriptional and protein level, we matched selected
+the Majority Protein ID class with the highest median signal, for each gene name
+We used limma removeBatchEffect to remove plex-associated batch effects for the data.
+removing further batch effects did not improve the TPM-BAC correlation, nor did
+the use of MAD-normalisation techniques. 
+
+To produce the quadrant plots in Figure ___ we made use of a dropout aware 
+linear-model, (proDA reference), in which log protein and variance stabilized
+(via limma's voom function) transcript expression were expresssed using common
+condition dependent effect (rna) and a protein specific 'MSdelta' effect (with the
+protein level 'ms' effect then being the sum of these) . Based on the
+significance of this MSdelta/dev effect, and the original DESeq2 results, We then 
+classified genes as follows: 
+
+- RNAseq significant positive, MSdelta not significant ~ 'RNA-down',
+- RNAseq significant positive, MSdelta significant, positive ~ 'RNA-down, delta_syn',
+- RNAseq significant positive, MSdelta significant, negative ~ 'RNA-down, delta_buff',
+- RNAseq significant positive, MSdelta significant, negative, abs(MSdelta) > abs(RNA_l2fc) ~ 'Divergent Negative'
+- RNAseq significant negative, MSdelta not significant ~ 'RNA-down',
+- RNAseq significant negative, MSdelta significant, positive ~ 'RNA-down, delta_buff',
+- RNAseq significant negative, MSdelta significant, negative ~ 'RNA-down, delta_syn',
+- RNAseq significant negative, MSdelta significant, positive, abs(MSdelta) > abs(RNA_l2fc) ~ 'Divergent Positive'
+- RNAseq no significant change, MSdelta significant, positive ~ 'Protein Up',
+- RNAseq no significant change, MSdelta significant, negative ~ 'Protein Down',
+- Otherwise:  'No Sig Effect'
+
+
