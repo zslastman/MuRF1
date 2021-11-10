@@ -5,9 +5,11 @@ This is the codebase for my collaboration with Suzuka Nagawa on her study of MuR
 used by various scripts
 ``` src/Rprofile.R```
 
-#this is the snakemake pipeline for the basic analysis, doesalignment,
-# transcript quantification (salmon) and some QC
-```src/0_6_murf1.smk
+this is the snakemake pipeline for the basic analysis, does alignment,
+transcript quantification (salmon) and some QC
+```
+src/0_6_murf1.smk  
+uses:
 	 src/sample_parameter.csv
 	 src/snake_job.sh
  	 src/config.yaml
@@ -17,9 +19,11 @@ used by various scripts
 
 
 
-#This runs deseq, carries out various things like QC and go term analyses
-#creates objects used by other scripts (is isoform aware)
-```src/4_rnaseq_de_report_2.Rmd
+This runs deseq, carries out various things like QC and go term analyses
+creates objects used by other scripts (is isoform aware)
+```
+src/4_rnaseq_de_report_2.Rmd
+uses:
 	 src/data/GTOGO.rds
  	src/genesofinterest.txt
  	src/gofuncs.R
