@@ -124,25 +124,6 @@ new_uniquedata<-new_uniquedata%>%
 colnames(new_uniquedata[,-1])==colnames(udata_sel[,-1])
 
 
-# View(new_uniquedata)
-# View(uniquedata)
-#Plot again as distribution of intensity (uniquepeptide_log2transform.png)
-
-# new_uniquedata[-1]%>%
-#   gather(variable, value)%>%
-#   ggplot(aes(value))+
-#   geom_histogram(bins=70) + 
-#   facet_wrap(~variable, scales = 'free_y')
-
-# #Plot as boxplot of distribution
-# new_uniquedata[-1]%>%
-#   gather(variable, value)%>%
-#   ggplot(aes(x=value, y=variable))+
-#   geom_boxplot(position="dodge2")
-
-#remove batch effect using limma package where batch=plex1/2, batch2=replicates
-#for replicates, a=3, b=2, c=1, d=5, e=4, f=ref)
-#limma package requires BiocManager
 batch <- c("A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","B","B","B","B","B","B","B","B","B","B","B","B","B","B","B","B")
 batch2 <- c("A", "B", "B", "B", "A", "C", "D","D","C", "E", "D", "A", "E", "E", "C", "F", "E","E","B", "E", "A","A", "D", "E", "A", "B", "C","C","E","C", "B", "F") 
 is_myob <- colnames(new_uniquedata[,-1])%>%str_detect('Myoblast')
@@ -242,7 +223,6 @@ normfuncs = c(
   norm_med = norm_med
 )
 
-stop()
 samppair=sampgroup_pairs[[1]]
 contrnm=names(sampgroup_pairs)[[1]]
 normfunc=identity
@@ -279,13 +259,14 @@ foldchange_comps = map_df(.id='batchcor',batchcordsets['onebatchcor'],function(m
       # tidy(cor.test(compdata$tpm,compdata$ms,use='complete'))
       cat('.')
       tidy(cor.test(compdata$log2FoldChange,compdata$ms_l2fc,use='complete'))
-    #  qplot(data=compdata,log2FoldChange,ms_l2fc,alpha=I(0.5))  
+     # qplot(data=compdata,log2FoldChange,ms_l2fc,alpha=I(0.5))  
     })
   })
 })
 })
-
 dir.create('tables')
+
+foldchange_comps%>%write_tsv('tables/foldchange_correlations.tsv')
 
 imap(normfuncs[c('none','norm_MAD','norm_med')],function(normfunc,normfuncname){
 udata_sel%>%
@@ -297,170 +278,3 @@ udata_sel%>%
   rownames_to_column('gene_name')%>%
   write_tsv(str_interp('tables/tmt_ms_${normfuncname}.tsv'))
 })
-
-foldchange_comps%>%select(batchcor,sample_pair,estimate,normfunc)%>%
-  pivot_wider(values_from='estimate',names_from='sample_pair')
-
-
-
-foldchange_comps
-
-stop()
-
-
-onebatchcor %>%
-  gather(variable, value)%>%
-  ggplot(aes(x=value, y=variable))+
-  geom_boxplot(position="dodge2")+
-  ggtitle("Single Batch corrected")
-
-twobatchcor %>%
-  gather(variable, value)%>%
-  ggplot(aes(x=value, y=variable))+
-  geom_boxplot(position="dodge2")+
-  ggtitle("Double Batch corrected")
-
-twobatchcor %>%
-  gather(variable, value)%>%
-  ggplot(aes(value))+
-  geom_histogram(bins = 70)+
-  ggtitle("Double Batch corrected")+
-  facet_wrap(~variable, scales='free_x')
-
-onebatchcor %>%
-  gather(variable, value)%>%
-  ggplot(aes(value))+
-  geom_histogram(bins = 70)+
-  ggtitle("Single Batch corrected")+
-  facet_wrap(~variable, scales='free_x')
-
-
-
-
-BNsingle <- bestNormalize(onebatchcor$Myoblast_3)
-
-
-onebatchcor_copy <- onebatchcor
-twobatchcor_copy <- twobatchcor
-
-output <- apply(onebatchcor_copy,2, bestNormalize)
-sink("bestNormalizeOutput.txt")
-print(output)
-sink()
-
-
-#Repeat using twobatch correction data
-output2 <- apply(twobatchcor_copy,2, bestNormalize)
-sink("bestNormalizeOutput2.txt")
-print(output)
-sink()
-
-#Perform OrderNorm on all columns which seems to fit most samples as per bestNormalizeOutput2.txt
-test <- orderNorm(twobatchcor$Myoblast_3)
-test
-libary(MASS)
-MASS::truehist(test$x.t, main="OrderNorm transformation", nbins=30)
-myob3_ON<-test$x.t
-myob3_ON<- as.data.frame(myob3_ON)
-ggplot(as.data.frame(test$x.t), aes(test$x.t))+
-  geom_boxplot()+
-  ggtitle("OrderNorm transformation")
-
-myob3_ON<-fortify(myob3_ON)
-
-#create a list of doubles containing the $x.t (transformed data) in output2
-normdata <- lapply(output2, '[[', 1)
-# View(normdata)
-
-df1 <- data.frame(matrix("", ncol = 0, nrow = length(twobatchcor$Myoblast_3)))
-
-for(i in seq(1,length(colnames(twobatchcor)))) {
-  str01 <- paste(colnames(twobatchcor[i]), sep = "")
-  templst <- orderNorm(twobatchcor[,i])
-  df1[,i] <- as.data.frame(templst$x.t)
-  colnames(df1)[i] <- str01
-}
-
-
-
-df1$Gene.names <- Gene.names
-df1<-df1%>%
-  relocate(Gene.names)
-head(df1)
-
-#Plot distribution of orderNorm values to check normalization
-df1[-1]%>%
-  gather(variable, value)%>%
-  ggplot(aes(value))+
-  geom_histogram(bins=70) + 
-  facet_wrap(~variable, scales = 'free_y')
-
-df1_copy <-select(df1,-(Gene.names))
-
-df1_copy %>%
-  gather(variable, value)%>%
-  ggplot(mapping=aes(x=value))+
-  geom_histogram(mapping=aes(colour=variable), bins=100)
-
-df1_long <- df1 %>%
-  pivot_longer(!Gene.names, names_to = "Treatment", values_to = "Intensity")
-
-head(df1_long) 
-
-df1_long%>%
-  filter(Gene.names=="Dcaf6")%>%
-  ggplot(aes(x=Treatment, y=Intensity))+
-  geom_point()+
-  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
-
-#Selecting data by gene name and by treatment
-# df1_long%>%
-#   filter(Gene.names=="Trim63")%>%
-#   filter(str_detect(Treatment, "Myoblast"))
-
-
-
-trim63_data <- df1_long%>%
-  filter(Gene.names=="Nae1")%>%
-  filter(str_detect(Treatment, "^Myoblast"))
-
-test <- df1 %>%
-  gather(replicate, value, -1) %>%
-  #filter(!duplicated(replicate)) %>%
-  filter(Gene.names == "Nae1") %>%
-  filter((replicate != "Ref1") & (replicate != "Ref2")) %>%
-  arrange(replicate) %>%
-  mutate(replicate = substr(replicate,1,nchar(replicate)-2))
-
-# head(test)
-# test %>%
-#     summarise(mean=mean(value))
-
-sample <- c("Myoblast", "Myotube", "Atrophy_Ctrl_24h", "Atrophy_Ctrl_72h", "Atrophy_24h", "Atrophy_72h")
-plot<-test %>%
-  group_by(replicate)%>%
-  ggplot(aes(x=factor(replicate, level=sample), y=value),colour=replicate)+
-  geom_boxplot()+
-  stat_summary(fun=mean, geom="point", shape=8, size=8, color="red", fill="red")+
-  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
-  ggtitle("Cul1")+
-  labs(x="Treatment",y="Normalized Intensity")
-
-png(filename="Cul1_box.png", width=800, height = 800, units="px", pointsize=12)
-plot
-dev.off()
-
-
-GOIs <- c("Trim63", "Myh1")
-
-# df1 %>%
-#   gather(replicate, value, -Gene.names) %>%
-#   mutate(replicate = 
-#            ifelse((replicate != "Ref1") & (replicate != "Ref2"),
-#                   substr(replicate,1,nchar(replicate)-2), replicate)) %>%
-#   filter(Gene.names == GOIs[1]) %>%
-#   ggplot(aes(x = replicate, y = value)) + 
-#   geom_boxplot(middle=mean()) +
-#   labs(title=GOIs[1])+
-#   theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
-
