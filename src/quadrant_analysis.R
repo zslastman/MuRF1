@@ -600,8 +600,8 @@ quadrantplots <- imap(sampgroup_pairs,function(sampgroup_pair,contrnm){
 
 #To produce the quadrant plots in Figure ___, we made use of a dropout aware 
 # linear-model, (proDA reference), in which log protein and variance stabilized
-# (via limma's voom function) transcript expression were expresssed as a common
-# condition dependent effect and a protein specific 'MSdelta' effect. Based on the
+# (via limma's voom function) transcript expression were expresssed using common
+# condition dependent effect (rna) and a protein specific 'MSdelta' effect. Based on the
 # significance of this MSdelta effect, and the original DESeq2 results, We then 
 # classified genes as follows:
 
