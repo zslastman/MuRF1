@@ -87,6 +87,9 @@ notuniquedata <- cleandata %>%
 
 #Select only treatment group columns and add genenames column
 udata_sel <-filter(uniquedata[,76:107])
+
+udata_sel <- mutate_if(udata_sel,is.numeric, list(~ . / log10(2) ))
+
 Genenames<- uniquedata$Gene.names
 udata_sel $Gene.names<-Genenames
 udata_sel <-udata_sel %>%
@@ -274,7 +277,7 @@ udata_sel%>%
   {set_rownames(as.matrix(.[,-1]),.[,1])}%>%
   removeBatchEffect(batch)%>%
   normfunc%>%
-  as.data.frame%>%
-  rownames_to_column('gene_name')%>%
-  write_tsv(str_interp('tables/tmt_ms_${normfuncname}.tsv'))
+    as.data.frame%>%
+    rownames_to_column('gene_name')%>%
+    write_tsv(str_interp('tables/tmt_ms_${normfuncname}.tsv'))
 })

@@ -28,6 +28,11 @@ uses:
  	src/genesofinterest.txt
  	src/gofuncs.R
 ```
+run like so:
+```
+rmarkdown::render(here('src/4_rnaseq_de_report_2.Rmd'),output_file=here('Reports/4_rnaseq_de_report_2.html'), intermediates_dir=here('Reports'),knit_root_dir=here('Reports')); message(normalizePath(here('Reports/4_rnaseq_de_report_2.html')))
+```
+
 this carries out rnaseq analysis but isoform *specific* (not just aware)
 ```src/4b_rnaseq_dtu_report.Rmd```
 
@@ -49,6 +54,11 @@ carry out linear model of ms and rnaseq, define quadrants
 
 this plots the quadrant data in an interactive way.
 ``` src/0_plotly.Rmd```
+You need to run it like so:
+```
+rmarkdown::render(here('src/0_plotly.Rmd'),output_file=here('Reports/plotly.html'), intermediates_dir=here('Reports'),knit_root_dir=here('Reports')); message(normalizePath(here('Reports/plotly.html')))
+
+```
 
 this exports various files to the project dropbox (mounted locally) 
  ```src/populate_dropbox.sh```

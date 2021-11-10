@@ -11,7 +11,6 @@ slice <- dplyr::slice
 gid2gnm <- read_tsv('pipeline/gid_2_gname.txt',col_names=c('gene_name','gene_id'))
 gid2gnm <- setNames(gid2gnm$gene_name,gid2gnm$gene_id)
 
-
 {
 #
 sampgroup_pairs = list(
@@ -132,7 +131,7 @@ stopifnot(exists('countvoom'))
 ################################################################################
 plotfile <- here(paste0('plots/countmeanvariance.pdf'))
 pdf(plotfile)
-plotSA(countvoom[sharedgnms,], 
+limma::plotSA(lmFit(countvoom[sharedgnms,]), 
 	main="Final model: Mean-variance trend", 
 	ylab = "Sqrt( standard deviation )")
 dev.off()
